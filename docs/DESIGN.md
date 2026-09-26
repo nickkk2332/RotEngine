@@ -43,9 +43,9 @@ gives you balance tests, reproducible bug reports, and later replays or netplay.
 * Muscle damage: thrust mean ≈ 0.35·ST − 2 and swing mean ≈ 0.55·ST − 2, converted to
   d6s (`combat.st_damage`). ST 10 punches for 1d-2; ST 60 punches for 5d+2.
 
-> **Open question:** your spec was cut off at "HP = ST, STAM". The code uses
-> stamina = CON (GURPS FP = HT) and lets templates buy extra of either with
-> `hp_bonus` / `stamina_bonus`.
+HP = ST and STAM = CON (confirmed). Templates can buy extra of either with
+`hp_bonus` / `stamina_bonus`. INT (learning, tactics, tech) and WIS (perception,
+willpower, morale, pain) are confirmed as described above and not wired in yet.
 
 ## 3. Resolution
 
@@ -207,8 +207,8 @@ PyO3) behind the same API.
 
 ## 9. Known gaps / tuning notes
 
-* The assassin scenario is hard (~10%). Without stealth she's a glass cannon against
-  pistols. That's the right outcome for an open fight, and stealth is the fix.
+* The assassin scenario is hard (~10%), and that is intended: teleporting doesn't
+  help against bullets you can't react to. Stealth is how she should win.
 * The AI is deliberately basic: best expected-value attack, reload, close distance,
   seek line of sight. It has no cover use, retreat or morale yet (WIS will drive morale).
 * Floors can span any distance from a support. Span limits are needed for realistic collapse.
