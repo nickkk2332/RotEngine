@@ -194,6 +194,8 @@ def best_attack_plan(sim: "Sim", attacker: "Creature", target: "Creature",
                      surprise: bool = False, skill_bonus: int = 0,
                      damage_bonus: int = 0, allow_aim: bool = True) -> AttackPlan | None:
     best: AttackPlan | None = None
+    if allow_aim and (attacker.shock or sim.enemies_within(attacker, 2)):
+        allow_aim = False  # just hurt, or someone's in your face: no time to line up a shot
     body = target.body
     cap = max(1.0, target.hp + target.max_hp)  # overkill is worthless
     parts = body.targetable()
@@ -388,7 +390,7 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
                 source: "Creature | None" = None, origin: "Pos | None" = None,
                 knockback_ok: bool = True) -> Injury | None:
     dtype = sim.content.get("damage_type", dtype_id)
-    if part_id is None or target.body.part(part_id).destroyed:
+    if part_id not in target.body.parts or target.body.part(part_id).destroyed:
         part_id = target.body.roll_location(sim.rng)
     dr = target.dr(part_id, dtype_id)
     prev_hp = target.hp
@@ -541,6 +543,7 @@ def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int) -> None
         if not world.supported(nxt):
             break
     target.aim_target = None
+    sim.make_room(target)
     if not target.dead and not target.has_status("prone"):
         if not check(sim.rng, target.stat("DEX") - (tiles - 1)).success:
             target.add_status("prone", None)
@@ -555,12 +558,12 @@ def use_power(sim: "Sim", c: "Creature", power: dict, target: "Creature | None")
     (no room to land, target out of range) fizzles and can't be retried for a
     couple of seconds, so the AI doesn't burn itself out retrying."""
     c.stamina -= power.get("cost", {}).get("stamina", 0)
-    sim.log(f"{c.name} uses {power['name']}!")
+    sim.log(f"{c.name} uses {power.get('name', power['id'])}!")
     ctx = effects.Ctx(sim, c, target)
     effects.run(power["effects"], ctx)
     cooldown = power.get("cooldown_ms", 0)
     if ctx.vars.get("_abort"):
-        sim.log(f"  ...but the {power['name']} fizzles.")
+        sim.log(f"  ...but the {power.get('name', power['id'])} fizzles.")
         cooldown = max(cooldown, FIZZLE_COOLDOWN_MS)
     if cooldown:
         c.cooldowns[power["id"]] = sim.time + cooldown / c.tempo

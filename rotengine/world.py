@@ -42,6 +42,7 @@ class World:
         self._supports = np.array([bool(m.get("supports")) for m in self.mats])
         self._climbable = np.array([bool(m.get("climbable")) for m in self.mats])
         self._nav: tuple[list, list, list] | None = None  # (passable, supported, climbable) as nested lists
+        self.version = 0  # bumped on every terrain change
 
     # -- editing -----------------------------------------------------------
     def set_fill(self, pos: Pos, mat: str) -> None:
@@ -50,6 +51,7 @@ class World:
         self.fill[z, y, x] = i
         self.fill_hp[z, y, x] = self.mats[i].get("hp", 0)
         self._nav = None
+        self.version += 1
 
     def set_floor(self, pos: Pos, mat: str | None) -> None:
         x, y, z = pos
@@ -57,6 +59,7 @@ class World:
         self.floor[z, y, x] = i
         self.floor_hp[z, y, x] = self.mats[i].get("hp", 0)
         self._nav = None
+        self.version += 1
 
     # -- queries -----------------------------------------------------------
     def in_bounds(self, pos: Pos) -> bool:
@@ -123,12 +126,12 @@ class World:
                 for s in range(1, n + 1)]
 
     def crossing(self, p: Pos, q: Pos) -> Pos | None:
-        """The floor slab crossed moving p -> q, if the move changes z."""
-        if q[2] > p[2]:
-            return q
-        if q[2] < p[2]:
-            return p
-        return None
+        """The floor slab crossed moving p -> q, if the move changes z: the
+        upper level's floor, over q's column. (Using p's column would make a
+        shooter looking down at a diagonal shoot out their own floor.)"""
+        if q[2] == p[2]:
+            return None
+        return (q[0], q[1], max(p[2], q[2]))
 
     def obstacles(self, a: Pos, b: Pos) -> list[tuple[str, Pos]] | None:
         """Solid-but-see-through things between a and b (glass, grates, glass

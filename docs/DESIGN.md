@@ -197,8 +197,9 @@ The balance numbers are checked by `tests/test_arena.py` and `--runs`:
   0.6 s. Result: about 82% against 8 thugs, who mostly die in the aftermath.
 * **Speedster** (tempo 8, ST 11, a knife): he acts 8× as often, defends at +6 against
   them, and hits like ST 31. Six riflemen at −6 to defend and swamped in their reaction
-  windows go down in about two seconds. Result: about 62%. When he loses, it's to two
-  bursts landing in the same instant: he's still a human body.
+  windows go down in about two seconds. Result: about 52%. When he loses, it's to two
+  bursts landing in the same instant: he's still a human body. The tempo number is
+  the knob for how "high powered" a speedster is.
 * **Desperate scraps:** two average knife fighters have skill 11 against a dodge of 8 or a
   parry of 7. The loser ends up unconscious, and sometimes bleeds out later. About 50/50.
 
@@ -313,6 +314,16 @@ PyO3) behind the same API.
 * Floors can span any distance from a support. Span limits are needed for realistic collapse.
 * Dropped weapons lie on the ground (`sim.items`) but nobody picks them up yet.
 * Surgery (the fix for internal bleeding) is only possible through effects so far.
+
+**Occupancy rules:** one living body per tile. Downed bodies block movement (walk
+around the fallen); corpses don't. Someone who wakes up, lands or is knocked onto an
+occupied tile is shifted to the nearest free one. A fall onto someone splits the
+damage and knocks them down. Scenario spawns must be free, standable tiles.
+
+**AI notes:** no aiming when just hurt or with an enemy within 2 tiles. A shooter whose
+line is blocked by a teammate holds aim briefly instead of repositioning. Failed path
+searches are remembered for 2 s (or until the terrain changes), and creatures with
+nothing reachable hold position.
 
 **Trait and status fields the engine reads:** `natural_dr`, `stat_mods`, `speed_bonus`,
 `dodge_bonus`, `parry_bonus`, `move_mult`, `tempo`, `momentum_exponent`,

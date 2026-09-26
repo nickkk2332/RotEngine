@@ -48,7 +48,7 @@ def build_world(scenario: dict, content: Content) -> World:
         for y, row in enumerate(level):
             for x, ch in enumerate(row.ljust(width)):
                 if ch not in legend:
-                    raise ValueError(f"scenario {scenario['id']}: no legend entry for {ch!r} at {(x, y, z)}")
+                    raise ScenarioError(f"scenario {scenario['id']}: no legend entry for {ch!r} at {(x, y, z)}")
                 tile = legend[ch]
                 if "fill" in tile:
                     world.set_fill((x, y, z), tile["fill"])
@@ -65,8 +65,18 @@ def build(scenario: dict, content: Content, seed: int | None = None,
     totals = Counter(n for (_, g), n in zip(groups, base_names) for _ in range(g.get("count", 1)))
     numbered: Counter = Counter()
     for (team, g), base in zip(groups, base_names):
+        if "at" in g and g.get("count", 1) > 1:
+            raise ScenarioError(f"{scenario['id']}: '{base}' has 'at' with count > 1; use 'area' instead")
+        if "at" not in g and "area" not in g:
+            raise ScenarioError(f"{scenario['id']}: '{base}' needs 'at' or 'area'")
         for _ in range(g.get("count", 1)):
-            pos = tuple(g["at"]) if "at" in g else _free_spot(sim, g["area"])
+            if "at" in g:
+                pos = tuple(g["at"])
+                if len(pos) != 3 or not sim.world.in_bounds(pos) or not sim.is_free(pos):
+                    raise ScenarioError(f"{scenario['id']}: '{base}' at {list(pos)} is not a free tile "
+                                        "to stand on (out of bounds, inside a wall, in mid-air or taken)")
+            else:
+                pos = _free_spot(sim, g["area"])
             numbered[base] += 1
             name = f"{base} {numbered[base]}" if totals[base] > 1 else base
             sim.spawn(g["creature"], team, pos, name)
@@ -81,9 +91,9 @@ def build(scenario: dict, content: Content, seed: int | None = None,
 def _free_spot(sim: Sim, area: list[int]) -> tuple[int, int, int]:
     x0, y0, x1, y1, z = area
     spots = [(x, y, z) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)
-             if sim.world.standable((x, y, z)) and sim.creature_at((x, y, z)) is None]
+             if sim.world.in_bounds((x, y, z)) and sim.is_free((x, y, z))]
     if not spots:
-        raise ValueError(f"no free standable tile in area {area}")
+        raise ScenarioError(f"no free tile to stand on in area {area}")
     return sim.rng.choice(spots)
 
 

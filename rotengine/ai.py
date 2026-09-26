@@ -20,6 +20,10 @@ if TYPE_CHECKING:
     from .world import Pos
 
 MAX_PATH_NODES = 3000
+STUCK_WAIT_MS = 2000
+AIM_HOLD_MS = 300
+MAX_AIM_HOLDS = 4
+FAILED_PATH_MEMORY_MS = 2000
 MOVE_EXERTION = 0.05
 FIRST_AID_MS = 5000
 
@@ -61,14 +65,24 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
 
     plan = combat.best_attack_plan(sim, c, target)
     if plan is not None and plan.value > 0:
+        c.aim_holds = 0
         return combat.resolve_attack(sim, c, target, plan)
+
+    # Lined up a shot and a teammate stepped into it: keep the aim and give
+    # them a moment to clear rather than walking off and starting over.
+    if (c.aim_target == target.uid and target in visible and c.aim_holds < MAX_AIM_HOLDS
+            and combat.friendly_in_line(sim, c, target)):
+        c.aim_holds += 1
+        return AIM_HOLD_MS
 
     # Can't hurt the target from here. Shooters look for a firing position;
     # everyone else closes in on whoever they can reach. Failing both, just get
     # eyes on the target (a leap or a better angle may open up from there).
     step = None
-    if _has_usable_ranged(c):
-        step = _step_toward(sim, c, target.pos, lambda p: sim.world.has_los(p, target.pos))
+    sees = lambda p: sim.world.has_los(p, target.pos)  # noqa: E731
+    shooter = _has_usable_ranged(c)
+    if shooter:
+        step = _step_toward(sim, c, target.pos, sees, kind="los")
     if step is None:
         for goal in [target] + sorted((e for e in enemies if e is not target),
                                       key=lambda e: (sim.distance(c, e), e.uid)):
@@ -76,10 +90,10 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
             if step is not None:
                 c.target = goal
                 break
+    if step is None and not shooter and c.powers:
+        step = _step_toward(sim, c, target.pos, sees, kind="los")  # a leap may open up from there
     if step is None:
-        step = _step_toward(sim, c, target.pos, lambda p: sim.world.has_los(p, target.pos))
-    if step is None:
-        return 500
+        return STUCK_WAIT_MS  # nothing reachable: hold position and re-think later
     return _move(sim, c, step)
 
 
@@ -151,17 +165,33 @@ def can_reach(sim: "Sim", c: "Creature", target: "Creature") -> bool:
 
 
 def _step_toward(sim: "Sim", c: "Creature", goal: "Pos",
-                 done: "Callable[[Pos], bool] | None" = None) -> "Pos | None":
+                 done: "Callable[[Pos], bool] | None" = None, kind: str = "reach") -> "Pos | None":
     """A* over walkable voxels toward goal; returns the first step.
 
     By default the search ends in melee reach of goal; `done` can replace
-    that test (e.g. "has line of sight to the goal")."""
+    that test (e.g. "has line of sight to the goal"), with `kind` naming it.
+    Failed searches are the expensive ones, so they're remembered for a
+    couple of seconds (or until the terrain changes)."""
+    key = (c.pos, goal, kind, sim.world.version)
+    failed_at = sim.path_failures.get(key)
+    if failed_at is not None and sim.time - failed_at < FAILED_PATH_MEMORY_MS:
+        return None
+    step = _astar(sim, c, goal, done)
+    if step is None:
+        sim.path_failures[key] = sim.time
+        if len(sim.path_failures) > 5000:
+            sim.path_failures.clear()
+    return step
+
+
+def _astar(sim: "Sim", c: "Creature", goal: "Pos",
+           done: "Callable[[Pos], bool] | None") -> "Pos | None":
     if done is None:
         def done(p: "Pos") -> bool:
             return sim.in_melee_reach(p, goal)
 
     world = sim.world
-    occupied = {o.pos for o in sim.creatures if o.active and o is not c}
+    occupied = {o.pos for o in sim.creatures if not o.dead and o is not c}  # step around the fallen
     start = c.pos
 
     def h(p: "Pos") -> int:

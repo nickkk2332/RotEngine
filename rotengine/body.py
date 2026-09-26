@@ -69,8 +69,8 @@ class Injury:
 class Body:
     def __init__(self, plan: dict, max_hp: int):
         self.plan = plan
-        self.max_hp = max_hp
-        self.hp: float = float(max_hp)
+        self.max_hp = max(1, max_hp)
+        self.hp: float = float(self.max_hp)
         self.blood: float = 100.0         # % of normal volume
         self.bleed_rate: float = 0.0      # external, %/s, can clot
         self.internal_bleed: float = 0.0  # %/s, needs surgery

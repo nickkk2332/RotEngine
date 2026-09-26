@@ -28,13 +28,14 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     "item": ("name",),
     "trait": (),
     "status": (),
-    "power": ("effects",),
+    "power": ("name", "effects"),
     "creature": ("name", "stats", "body"),
     "tile_legend": ("tiles",),
     "skill": ("stat",),
 }
 
 _META_KEYS = {"copy-from", "extend", "delete", "relative", "abstract"}
+HOOKS = ("on_damaged", "on_second", "on_kill")
 
 
 class ContentError(Exception):
@@ -120,21 +121,41 @@ class Content:
                 where = f"{self.source(type_, id_)} {type_} '{id_}'"
                 try:
                     obj = self.get(type_, id_)
+                    errors.extend(f"{where}: {e}" for e in self._validate_one(type_, obj, effects))
                 except ContentError as e:
                     errors.append(f"{where}: {e}")
-                    continue
-                for field in REQUIRED.get(type_, ()):
-                    if field not in obj:
-                        errors.append(f"{where}: missing required field '{field}'")
-                errors.extend(f"{where}: {e}" for e in _check_refs(self, type_, obj))
-                for hook, fx in obj.get("hooks", {}).items():
-                    errors.extend(f"{where} hook {hook}: {e}" for e in effects.validate(fx))
-                if type_ == "power":
-                    errors.extend(f"{where}: {e}" for e in effects.validate(obj["effects"]))
-                    if "ai_condition" in obj:
-                        errors.extend(f"{where} ai_condition: {e}"
-                                      for e in effects.validate_condition(obj["ai_condition"]))
+                except Exception as e:  # malformed data must be a report, never a crash
+                    errors.append(f"{where}: malformed ({type(e).__name__}: {e})")
         return errors
+
+    def _validate_one(self, type_: str, obj: dict, effects) -> Iterable[str]:
+        missing = [f for f in REQUIRED.get(type_, ()) if f not in obj]
+        for field in missing:
+            yield f"missing required field '{field}'"
+        yield from _check_refs(self, type_, obj)
+        hooks = obj.get("hooks", {})
+        if not isinstance(hooks, dict):
+            yield "'hooks' must be an object of {hook_name: [effects]}"
+        else:
+            for hook, fx in hooks.items():
+                if hook not in HOOKS:
+                    yield f"unknown hook '{hook}' (known: {', '.join(HOOKS)})"
+                yield from (f"hook {hook}: {e}" for e in effects.validate(fx, content=self))
+        if type_ == "power" and "effects" in obj:
+            yield from effects.validate(obj["effects"], content=self)
+            if "ai_condition" in obj:
+                yield from (f"ai_condition: {e}" for e in effects.validate_condition(obj["ai_condition"]))
+        if type_ == "creature" and not missing:
+            stats = obj["stats"]
+            if not isinstance(stats, dict) or any(not isinstance(v, (int, float)) for v in stats.values()):
+                yield "stats must be an object of numbers"
+            elif stats.get("ST", 10) + obj.get("hp_bonus", 0) < 1:
+                yield "ST (+ hp_bonus) must be at least 1: HP = ST"
+        if type_ == "body_plan" and not missing:
+            ids = {p.get("id") for p in obj["parts"]}
+            for p in obj["parts"]:
+                if p.get("parent") and p["parent"] not in ids:
+                    yield f"part '{p.get('id')}' has unknown parent '{p['parent']}'"
 
 
 def _check_refs(content: Content, type_: str, obj: dict) -> Iterable[str]:
@@ -156,15 +177,23 @@ def _check_refs(content: Content, type_: str, obj: dict) -> Iterable[str]:
         yield from need("damage_type", atk.get("damage", {}).get("type"))
 
 
-def _apply_relative(out: dict, rel: dict) -> None:
+def _apply_relative(out: dict, rel: dict, path: str = "relative") -> None:
+    if not isinstance(rel, dict):
+        raise ContentError(f"{path} must be an object")
     for k, v in rel.items():
         if isinstance(v, dict):
-            _apply_relative(out.setdefault(k, {}), v)
-        else:
+            if not isinstance(out.setdefault(k, {}), dict):
+                raise ContentError(f"{path}.{k}: can't apply an object to {out[k]!r}")
+            _apply_relative(out[k], v, f"{path}.{k}")
+        elif isinstance(v, (int, float)) and isinstance(out.get(k, 0), (int, float)):
             out[k] = out.get(k, 0) + v
+        else:
+            raise ContentError(f"{path}.{k}: only numbers can be relative (got {v!r} on {out.get(k)!r})")
 
 
 def _apply_extend(out: dict, ext: dict) -> None:
+    if not isinstance(ext, dict):
+        raise ContentError("extend must be an object")
     for k, v in ext.items():
         if isinstance(v, list):
             out[k] = list(out.get(k, [])) + v

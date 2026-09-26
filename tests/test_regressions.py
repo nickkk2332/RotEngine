@@ -76,3 +76,86 @@ def test_blink_attack_never_stops_to_aim(content):
     t = sim.spawn("thug", "b", (8, 4, 0))
     plan = combat.best_attack_plan(sim, a, t, allow_aim=False)
     assert plan is not None and not plan.aim_first
+
+
+# -- found by fuzzing ----------------------------------------------------------
+def test_waking_under_someone_shifts_over(content):
+    sim = open_arena(content)
+    a = sim.spawn("street_tough", "a", (3, 4, 0))
+    b = sim.spawn("street_tough", "a", (4, 4, 0))
+    combat.knock_out(sim, a)
+    b.pos = a.pos  # e.g. knocked back onto the body
+    del a.statuses["unconscious"]
+    sim.make_room(a)
+    assert a.pos != b.pos and sim.world.standable(a.pos)
+
+
+def test_ai_does_not_path_onto_bodies(content):
+    from rotengine import ai
+    sim = open_arena(content, w=5, h=1)
+    walker = sim.spawn("street_tough", "a", (0, 0, 0))
+    body = sim.spawn("street_tough", "b", (2, 0, 0))
+    goal = sim.spawn("street_tough", "b", (4, 0, 0))
+    combat.knock_out(sim, body)
+    assert ai._step_toward(sim, walker, goal.pos) is None  # a 1-wide corridor blocked by a body
+
+
+def test_falling_onto_someone(content):
+    sim = open_arena(content, d=2)
+    sim.world.set_floor((5, 4, 1), None)
+    below = sim.spawn("soldier", "a", (5, 4, 0))
+    faller = sim.spawn("soldier", "b", (5, 4, 1))
+    sim.check_fall(faller)
+    assert any("lands on soldier" in line for line in sim.lines)
+    assert faller.pos != below.pos and faller.pos[2] == 0
+    assert below.has_status("prone")
+
+
+def test_corpses_take_no_statuses(content):
+    sim = open_arena(content)
+    c = sim.spawn("street_tough", "a", (3, 4, 0))
+    combat.kill(sim, c, "test")
+    sim.apply_status(c, "stunned", 2000)
+    c.add_status("prone", None)
+    assert c.statuses == {}
+
+
+def test_shooting_down_doesnt_hit_your_own_floor(content):
+    world = World(content.all("material"), 6, 3, 2)
+    for x in range(6):
+        for y in range(3):
+            world.set_floor((x, y, 0), "concrete")
+    world.set_floor((1, 1, 1), "glass")  # the shooter stands on a glass ledge
+    assert world.crossing((1, 1, 1), (2, 1, 0)) == (2, 1, 1)
+    assert world.obstacles((1, 1, 1), (3, 2, 0)) == []
+
+
+def test_bad_content_is_reported_not_raised():
+    from rotengine.content import Content
+    c = Content()
+    c.add({"type": "damage_type", "id": "crush"})
+    c.add({"type": "status", "id": "stunned"})
+    c.add({"type": "power", "id": "a", "name": "a"})                                   # no effects
+    c.add({"type": "power", "id": "b", "name": "b", "effects": [], "ai_condition": {"and": 5}})
+    c.add({"type": "trait", "id": "c", "hooks": [1, 2]})
+    c.add({"type": "trait", "id": "d", "hooks": {"on_second": [{"add_status": {"id": "nope"}}]}})
+    c.add({"type": "power", "id": "e", "name": "e",
+           "effects": [{"damage": {"amount": "2x6", "type": "fire"}}]})
+    c.add({"type": "trait", "id": "base", "tags": ["x"]})
+    c.add({"type": "trait", "id": "f", "copy-from": "base", "relative": {"tags": 1}})
+    errors = "\n".join(c.validate())
+    for expected in ("missing required field 'effects'", "must be a list of conditions",
+                     "'hooks' must be an object", "unknown status 'nope'", "bad dice expression",
+                     "unknown damage_type 'fire'", "only numbers can be relative"):
+        assert expected in errors, expected
+
+
+def test_bad_spawn_positions_are_rejected(content):
+    import pytest
+    from rotengine import arena
+    base = {"id": "t", "levels": [["#....", "....."]], "teams": {"b": [{"creature": "thug", "at": [4, 1, 0]}]}}
+    for group in ({"creature": "thug", "at": [0, 0, 0]},                # inside a wall
+                  {"creature": "thug", "at": [2, 0, 0], "count": 2},    # stacked
+                  {"creature": "thug", "at": [9, 9, 0]}):               # out of bounds
+        with pytest.raises(arena.ScenarioError):
+            arena.build({**base, "teams": {**base["teams"], "a": [group]}}, content, 0)

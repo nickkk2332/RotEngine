@@ -44,6 +44,7 @@ class Sim:
         self._seq = itertools.count()
         self._by_uid: dict[int, Creature] = {}
         self._terrain_dirty = False
+        self.path_failures: dict[tuple, int] = {}  # AI memo of recently failed searches
         heapq.heappush(self._queue, (TICK_MS, next(self._seq), -1))
 
     # -- bookkeeping -------------------------------------------------------
@@ -107,6 +108,26 @@ class Sim:
                 return c
         return None
 
+    def is_free(self, pos: Pos, ignore: Creature | None = None) -> bool:
+        """Standable, and no living body (standing or down) already there.
+        Corpses can be stood on."""
+        return self.world.standable(pos) and not any(
+            o.pos == pos and not o.dead and o is not ignore for o in self.creatures)
+
+    def make_room(self, c: Creature) -> None:
+        """If c shares its tile with another living body (it woke up under
+        someone, or landed on them), shift it to the nearest free tile."""
+        if c.dead or not any(o is not c and not o.dead and o.pos == c.pos for o in self.creatures):
+            return
+        x, y, z = c.pos
+        for r in (1, 2, 3):
+            ring = [(x + dx, y + dy, z) for dx in range(-r, r + 1) for dy in range(-r, r + 1)
+                    if max(abs(dx), abs(dy)) == r]
+            free = [p for p in ring if self.is_free(p, ignore=c)]
+            if free:
+                c.pos = self.rng.choice(free)
+                return
+
     def enemies_of(self, c: Creature) -> list[Creature]:
         return [o for o in self.creatures if o.team != c.team and o.active]
 
@@ -116,7 +137,7 @@ class Sim:
     def spot_near(self, target: Creature, behind_from: Pos | None = None) -> Pos | None:
         x, y, z = target.pos
         spots = [(x + dx, y + dy, z) for dx, dy in DIRS8]
-        spots = [p for p in spots if self.world.standable(p) and self.creature_at(p) is None]
+        spots = [p for p in spots if self.is_free(p)]
         if not spots:
             return None
         if behind_from is None:
@@ -144,9 +165,16 @@ class Sim:
             return
         c.pos = (x, y, z)
         self.log(f"{c.name} falls {levels} storey{'s' if levels > 1 else ''}!")
-        combat.deal_damage(self, c, Dice(2 * min(levels, 10), 6).roll(self.rng), "crush",
-                           knockback_ok=False)
+        dmg = Dice(2 * min(levels, 10), 6).roll(self.rng)
+        under = next((o for o in self.creatures if o is not c and not o.dead and o.pos == c.pos), None)
+        if under is not None:  # landing on someone: they break the fall, painfully
+            self.log(f"{c.name} lands on {under.name}!")
+            combat.deal_damage(self, under, dmg // 2, "crush", knockback_ok=False)
+            under.add_status("prone", None)
+            dmg -= dmg // 2
+        combat.deal_damage(self, c, dmg, "crush", knockback_ok=False)
         c.add_status("prone", None)
+        self.make_room(c)
 
     # -- terrain ---------------------------------------------------------------
     def terrain_changed(self) -> None:
@@ -265,6 +293,7 @@ class Sim:
                 if check(self.rng, c.stat("CON")).success:
                     del c.statuses["unconscious"]
                     self.log(f"{c.name} comes to.")
+                    self.make_room(c)
             self.fire_hooks(c, "on_second")
 
     def _blood(self, c: Creature, second: int) -> None:

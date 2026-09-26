@@ -108,8 +108,15 @@ def test(c: Any, ctx: Ctx) -> bool:
     return CONDITIONS[name](args, ctx)
 
 
-def validate(effects: Any, path: str = "") -> list[str]:
-    """Static check of an effect list, so modders get errors at load time."""
+VALUE_KEYS = ("amount", "distance", "radius", "range", "duration_ms", "value", "fraction",
+              "mod", "vs", "max_rise", "skill_bonus", "damage_bonus")
+STATS = ("ST", "CON", "DEX", "INT", "WIS")
+
+
+def validate(effects: Any, path: str = "", content: Any = None) -> list[str]:
+    """Static check of an effect list, so modders get errors at load time
+    rather than a crash mid-fight. With `content`, references to damage
+    types and statuses are checked too."""
     if not isinstance(effects, list):
         return [f"{path or 'effects'} must be a list"]
     errors: list[str] = []
@@ -119,10 +126,13 @@ def validate(effects: Any, path: str = "") -> list[str]:
             errors.append(f"{where}: effect must be an object")
             continue
         if "if" in op:
+            extra = set(op) - {"if", "then", "else"}
+            if extra:
+                errors.append(f"{where}: unexpected keys next to 'if': {sorted(extra)}")
             errors += validate_condition(op["if"], where + ".if")
             for k in ("then", "else"):
                 if k in op:
-                    errors += validate(op[k], f"{where}.{k}")
+                    errors += validate(op[k], f"{where}.{k}", content)
             continue
         if len(op) != 1:
             errors.append(f"{where}: effect must have exactly one op, got {sorted(op)}")
@@ -130,11 +140,66 @@ def validate(effects: Any, path: str = "") -> list[str]:
         (name, args), = op.items()
         if name not in EFFECTS:
             errors.append(f"{where}: unknown effect '{name}'")
-        if isinstance(args, dict):
-            for k in _NESTED:
-                if k in args:
-                    errors += validate(args[k], f"{where}.{name}.{k}")
+            continue
+        errors += _validate_args(name, args, f"{where}.{name}", content)
     return errors
+
+
+def _validate_args(name: str, args: Any, where: str, content: Any) -> list[str]:
+    errors: list[str] = []
+    if name == "message":
+        return [] if isinstance(args, str) else [f"{where}: must be a string"]
+    if not isinstance(args, dict):
+        return [f"{where}: arguments must be an object"]
+    for k in VALUE_KEYS:
+        if k in args:
+            errors += validate_value(args[k], f"{where}.{k}")
+    for k in _NESTED:
+        if k in args:
+            errors += validate(args[k], f"{where}.{k}", content)
+    if args.get("who", "self") not in ("self", "target"):
+        errors.append(f"{where}.who: must be 'self' or 'target'")
+    if name == "modify_stat" and args.get("stat") not in STATS:
+        errors.append(f"{where}.stat: must be one of {', '.join(STATS)}")
+    if name in ("damage", "set_var", "add_status", "remove_status"):
+        need = {"damage": "amount", "set_var": "name", "add_status": "id", "remove_status": "id"}[name]
+        if need not in args:
+            errors.append(f"{where}: missing '{need}'")
+    if content is not None:
+        if name == "damage" and not content.has("damage_type", args.get("type", "crush")):
+            errors.append(f"{where}.type: unknown damage_type '{args.get('type')}'")
+        if name in ("add_status", "remove_status") and "id" in args and not content.has("status", args["id"]):
+            errors.append(f"{where}.id: unknown status '{args['id']}'")
+    return errors
+
+
+def validate_value(v: Any, path: str) -> list[str]:
+    if isinstance(v, bool):
+        return [f"{path}: expected a number, dice or expression, got {v!r}"]
+    if isinstance(v, (int, float)):
+        return []
+    if isinstance(v, str):
+        try:
+            Dice.parse(v)
+            return []
+        except ValueError:
+            return [f"{path}: bad dice expression {v!r}"]
+    if not isinstance(v, dict) or len(v) != 1:
+        return [f"{path}: expected a number, dice string or single-key expression"]
+    (name, args), = v.items()
+    if name not in VALUES:
+        return [f"{path}: unknown value '{name}'"]
+    if name in ("add", "min", "max", "mul"):
+        if not isinstance(args, list):
+            return [f"{path}.{name}: must be a list"]
+        return [e for i, a in enumerate(args) for e in validate_value(a, f"{path}.{name}[{i}]")]
+    if name == "neg":
+        return validate_value(args, f"{path}.neg")
+    if name == "stat":
+        stat = args.get("stat") if isinstance(args, dict) else args
+        if stat not in STATS:
+            return [f"{path}.stat: must be one of {', '.join(STATS)}"]
+    return []
 
 
 def validate_condition(c: Any, path: str = "condition") -> list[str]:
@@ -146,9 +211,27 @@ def validate_condition(c: Any, path: str = "condition") -> list[str]:
     if name not in CONDITIONS:
         return [f"{path}: unknown condition '{name}'"]
     if name in ("and", "or"):
+        if not isinstance(args, list):
+            return [f"{path}.{name}: must be a list of conditions"]
         return [e for i, sub in enumerate(args) for e in validate_condition(sub, f"{path}.{name}[{i}]")]
     if name == "not":
         return validate_condition(args, f"{path}.not")
+    if name == "compare":
+        if not isinstance(args, list) or len(args) != 3:
+            return [f"{path}.compare: must be [value, operator, value]"]
+        errors = [] if args[1] in _OPS else [f"{path}.compare: unknown operator {args[1]!r}"]
+        return errors + validate_value(args[0], f"{path}.compare[0]") + validate_value(args[2], f"{path}.compare[2]")
+    if name == "roll":
+        if not isinstance(args, dict) or not ({"stat", "skill", "vs"} & set(args)):
+            return [f"{path}.roll: needs 'stat', 'skill' or 'vs'"]
+        errors = validate_value(args["vs"], f"{path}.roll.vs") if "vs" in args else []
+        if "stat" in args and args["stat"] not in STATS:
+            errors.append(f"{path}.roll.stat: must be one of {', '.join(STATS)}")
+        if "mod" in args:
+            errors += validate_value(args["mod"], f"{path}.roll.mod")
+        return errors
+    if name == "chance":
+        return validate_value(args, f"{path}.chance")
     return []
 
 
@@ -156,7 +239,8 @@ def validate_condition(c: Any, path: str = "condition") -> list[str]:
 @value("stat")
 def _v_stat(args, ctx):
     spec = args if isinstance(args, dict) else {"stat": args}
-    return ctx.who(spec).stat(spec["stat"])
+    who = ctx.who(spec)
+    return who.stat(spec["stat"]) if who else 0
 
 
 @value("var")
@@ -166,12 +250,14 @@ def _v_var(name, ctx):
 
 @value("hp")
 def _v_hp(args, ctx):
-    return ctx.who(args).hp
+    who = ctx.who(args)
+    return who.hp if who else 0
 
 
 @value("stamina")
 def _v_stamina(args, ctx):
-    return ctx.who(args).stamina
+    who = ctx.who(args)
+    return who.stamina if who else 0
 
 
 @value("distance_to_target")
@@ -216,6 +302,8 @@ def _c_compare(args, ctx):
 def _c_roll(args, ctx):
     """3d6 check vs a stat/skill (+mod), or vs an arbitrary value."""
     who = ctx.who(args)
+    if who is None:
+        return False
     if "vs" in args:
         target = evaluate(args["vs"], ctx)
     elif "skill" in args:
@@ -233,13 +321,15 @@ def _c_chance(p, ctx):
 @condition("has_status")
 def _c_has_status(args, ctx):
     spec = args if isinstance(args, dict) else {"id": args}
-    return ctx.who(spec).has_status(spec["id"])
+    who = ctx.who(spec)
+    return who is not None and who.has_status(spec["id"])
 
 
 @condition("has_trait")
 def _c_has_trait(args, ctx):
     spec = args if isinstance(args, dict) else {"id": args}
-    return ctx.who(spec).has_trait(spec["id"])
+    who = ctx.who(spec)
+    return who is not None and who.has_trait(spec["id"])
 
 
 @condition("has_target")
@@ -299,6 +389,8 @@ def _e_damage(args, ctx):
 @effect("heal")
 def _e_heal(args, ctx):
     who = ctx.who(args)
+    if who is None or who.dead:
+        return
     if not who.dead:
         who.body.heal(evaluate(args["amount"], ctx))
 
@@ -308,7 +400,9 @@ def _e_stop_bleeding(args, ctx):
     """Reduce external bleeding; "internal": true also closes internal bleeds
     (surgery, healing factors, magic)."""
     who = ctx.who(args)
-    keep = 1 - evaluate(args.get("fraction", 1), ctx)
+    if who is None or who.dead:
+        return
+    keep = 1 - min(1.0, max(0.0, evaluate(args.get("fraction", 1), ctx)))
     who.body.bleed_rate *= keep
     if args.get("internal"):
         who.body.internal_bleed *= keep
@@ -317,6 +411,8 @@ def _e_stop_bleeding(args, ctx):
 @effect("restore_blood")
 def _e_restore_blood(args, ctx):
     who = ctx.who(args)
+    if who is None or who.dead:
+        return
     if not who.dead:
         who.body.blood = min(100.0, who.body.blood + evaluate(args["amount"], ctx))
 
@@ -324,6 +420,8 @@ def _e_restore_blood(args, ctx):
 @effect("modify_stat")
 def _e_modify_stat(args, ctx):
     who = ctx.who(args)
+    if who is None or who.dead:
+        return
     stat = args["stat"]
     new = who.stat_bonus[stat] + evaluate(args["amount"], ctx)
     if "max_bonus" in args:
@@ -334,6 +432,8 @@ def _e_modify_stat(args, ctx):
 @effect("add_status")
 def _e_add_status(args, ctx):
     who = ctx.who(args)
+    if who is None or who.dead:
+        return
     dur = args.get("duration_ms")
     if dur is None:
         who.add_status(args["id"], None)
@@ -343,14 +443,17 @@ def _e_add_status(args, ctx):
 
 @effect("remove_status")
 def _e_remove_status(args, ctx):
-    ctx.who(args).statuses.pop(args["id"], None)
+    who = ctx.who(args)
+    if who is not None:
+        who.statuses.pop(args["id"], None)
 
 
 @effect("knockback")
 def _e_knockback(args, ctx):
     from .combat import knockback
     who = ctx.who(args)
-    knockback(ctx.sim, who, ctx.self.pos, int(evaluate(args["distance"], ctx)))
+    if who is not None and who is not ctx.self:
+        knockback(ctx.sim, who, ctx.self.pos, int(evaluate(args["distance"], ctx)))
 
 
 @effect("for_each_enemy")
@@ -398,7 +501,7 @@ def _spots_near(sim, target):
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
             p = (tx + dx, ty + dy, tz)
-            if (dx or dy) and sim.world.standable(p) and sim.creature_at(p) is None:
+            if (dx or dy) and sim.is_free(p):
                 yield p
 
 

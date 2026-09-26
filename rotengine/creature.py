@@ -62,6 +62,7 @@ class Creature:
         self.facing: tuple[int, int] = (1, 0)
         self.shock = 0                    # one-off pain penalty on the next action
         self.aim_target: int | None = None  # uid we've spent time aiming at
+        self.aim_holds = 0                # consecutive waits for a teammate to clear the line
         self.defense_until = 0            # end of the current reaction window (ms)
         self.defenses_in_window = 0
         self.dead = False
@@ -117,6 +118,8 @@ class Creature:
         return sum(d.get(field, 0) for d in self.status_defs())
 
     def add_status(self, status_id: str, until: float | None) -> None:
+        if self.dead:
+            return
         cur = self.statuses.get(status_id, 0)
         if status_id in self.statuses and (cur is None or (until is not None and cur >= until)):
             return

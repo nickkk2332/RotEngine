@@ -43,8 +43,8 @@ python -m pytest
 | Street fight: two average people with knives | ~50/50; the loser is usually unconscious, occasionally bleeds out later |
 | The Hulk (ST 60, DR 25) vs 10 armoured riflemen | Hulk wins 100%; soldiers mostly end up unconscious with broken ribs |
 | John Wick (guns 20) vs 8 armed thugs | Wick wins ~82%; most thugs die of blood loss after the fight |
-| Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~62%; loses to simultaneous bursts |
-| Blink assassin vs 6 guards, 2 with pistols | Assassin wins ~6%, usually after several kills. Deliberately hard; needs stealth |
+| Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~52%; loses to simultaneous bursts |
+| Blink assassin vs 6 guards, 2 with pistols | Assassin wins ~9%, usually after several kills. Deliberately hard; needs stealth |
 
 Map glyphs: creatures by their template glyph, `&` someone down (unconscious), `%` a
 corpse, dropped weapons by their item glyph. Terrain: `#` concrete/brick, `|` drywall,
