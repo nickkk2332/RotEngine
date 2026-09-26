@@ -9,8 +9,16 @@ Things that fall out of these rules rather than being special-cased:
 * Damage has to get past DR before it counts, so it scales by threshold rather
   than by percentage. A rifle round against a DR 25 hide mostly does nothing,
   and a ST 60 haymaker against a DR 4 vest does not care about the vest.
-* Crushing blows cause knockback in proportion to damage vs the target's ST,
-  and a knocked-back body can go through walls, windows and off ledges.
+* Defending takes time. Every defense opens a reaction window (1 s of the
+  defender's own time), and each further defense inside it is at -2. Being
+  mobbed, or attacked by something ten times faster than you, overwhelms you
+  without a special rule.
+* Relative speed matters. Defense is +2 per doubling of the defender's tempo
+  over the attacker's, and -2 per halving.
+* Facing matters. Attacks from the side are at -2 to defend, and from behind
+  there is no defense at all.
+* Bullets are physical. Misses and dodged rounds keep flying, hit
+  bystanders, chew through walls, and hit the cover a target is hiding behind.
 """
 from __future__ import annotations
 
@@ -28,6 +36,14 @@ if TYPE_CHECKING:
     from .sim import Sim
     from .world import Pos
 
+REACTION_MS = 1000          # a defense occupies this much of the defender's own time
+TEMPO_DEFENSE = 2           # defense bonus per doubling of defender tempo over attacker tempo
+STACKED_DEFENSE_PENALTY = 2  # per earlier defense still inside the window
+SIDE_PENALTY = 2
+AIM_MS = 1000
+BYSTANDER_HIT = 9           # 3d6 roll to hit someone standing in a stray round's path
+_RING = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
+
 
 # -- numbers ---------------------------------------------------------------
 def st_damage(st: int, kind: str) -> Dice:
@@ -43,7 +59,9 @@ def attack_dice(attacker: "Creature", attack: dict) -> Dice:
     dmg = attack["damage"]
     if "dice" in dmg:
         return Dice.parse(dmg["dice"])
-    base = st_damage(attacker.stat("ST"), dmg["st"])
+    # Momentum: limbs moving N times faster hit harder (traits opt in).
+    st = attacker.stat("ST") * attacker.tempo ** attacker.trait_sum("momentum_exponent")
+    base = st_damage(round(st), dmg["st"])
     return Dice(base.n, base.sides, base.add + dmg.get("add", 0))
 
 
@@ -64,6 +82,71 @@ def expected_injury(dice: Dice, dr: int, mult: float, cap: float) -> float:
     return total
 
 
+def _sign(v: int) -> int:
+    return (v > 0) - (v < 0)
+
+
+def face(c: "Creature", toward: "Pos") -> None:
+    d = (_sign(toward[0] - c.pos[0]), _sign(toward[1] - c.pos[1]))
+    if d != (0, 0):
+        c.facing = d
+
+
+def arc(defender: "Creature", from_pos: "Pos") -> str:
+    """'front', 'side' or 'rear' relative to where the defender is facing."""
+    d = (_sign(from_pos[0] - defender.pos[0]), _sign(from_pos[1] - defender.pos[1]))
+    if d == (0, 0):
+        return "front"
+    steps = abs(_RING.index(d) - _RING.index(defender.facing))
+    steps = min(steps, 8 - steps)
+    return "front" if steps <= 1 else "side" if steps == 2 else "rear"
+
+
+def cover(sim: "Sim", shooter: "Pos", target: "Creature") -> tuple[int, "Pos | None"]:
+    """How much of the target hides behind solid terrain, seen from shooter.
+    Casts rays at the corners of the target's tile: -1 per blocked corner,
+    -4 when all but the middle is hidden. Returns (penalty, blocking voxel)."""
+    tx, ty, tz = target.pos
+    blocked, where = 0, None
+    for ox, oy in ((-0.45, -0.45), (0.45, -0.45), (-0.45, 0.45), (0.45, 0.45)):
+        hit = sim.world.first_opaque(shooter, (tx + ox, ty + oy, tz), exclude=target.pos)
+        if hit is not None:
+            blocked += 1
+            where = hit
+    return (-4 if blocked >= 3 else -blocked), where
+
+
+# -- defense -------------------------------------------------------------------
+def defense_against(sim: "Sim", attacker: "Creature", target: "Creature", kind: str,
+                    surprise: bool = False) -> tuple[str, int] | None:
+    """The target's defense roll target, or None if it can't defend at all."""
+    if surprise or not target.conscious:
+        return None
+    side = arc(target, attacker.pos)
+    ratio = target.tempo / attacker.tempo
+    if side == "rear" and ratio >= 4:
+        side = "front" if ratio >= 16 else "side"  # enough time to glance back
+    if side == "rear":
+        return None
+    name, value = target.best_defense(kind)
+    value -= target.defense_penalty()
+    # Seeing it coming: a tempo-8 speedster watches a trigger pull in slow
+    # motion (+6), and a normal person barely registers the speedster (-6).
+    value += round(TEMPO_DEFENSE * math.log2(ratio))
+    if side == "side":
+        value -= SIDE_PENALTY
+    if sim.time < target.defense_until:
+        value -= STACKED_DEFENSE_PENALTY * target.defenses_in_window
+    return name, value
+
+
+def _spend_defense(sim: "Sim", target: "Creature") -> None:
+    if sim.time >= target.defense_until:
+        target.defenses_in_window = 0
+        target.defense_until = sim.time + int(REACTION_MS / target.tempo)
+    target.defenses_in_window += 1
+
+
 # -- planning ------------------------------------------------------------------
 @dataclass
 class AttackPlan:
@@ -73,29 +156,35 @@ class AttackPlan:
     skill: int                 # final effective skill
     location: str | None       # None = wherever it lands
     deceptive: int             # levels of deceptive attack (-2 skill / -1 enemy defense each)
-    value: float               # expected injury per second
-
-    @property
-    def time_ms(self) -> int:
-        return self.attack.get("time_ms", 1000)
+    value: float               # expected injury per second of the attacker's time
+    aim_first: bool = False    # spend time aiming before this shot
+    time_ms: int = 1000
 
 
 def base_skill(sim: "Sim", attacker: "Creature", target: "Creature", attack: dict,
                item: "Item | None") -> int | None:
     """Effective skill before hit location / deception, or None if impossible."""
-    dist = sim.distance(attacker, target)
-    skill = attacker.skill(attack["skill"]) + attack.get("skill_mod", 0)
-    skill += int(attacker.status_sum("attack_mod")) - attacker.shock
+    skill = attacker.skill(attack["skill"]) + attack.get("skill_mod", 0) - attacker.action_penalty()
     if attack["kind"] == "melee":
         if not sim.in_melee_reach(attacker.pos, target.pos, attack.get("reach", 1)):
             return None
-    else:
-        if dist > attack.get("range", 100) or item is not None and item.ammo == 0:
-            return None
-        if not sim.world.has_los(attacker.pos, target.pos):
-            return None
-        skill += attack.get("acc", 0) + range_penalty(dist)
-    return skill
+        return skill
+    dist = sim.distance(attacker, target)
+    if dist > attack.get("range", 100) or item is not None and item.ammo == 0:
+        return None
+    if not sim.world.has_los(attacker.pos, target.pos):
+        return None
+    if attacker.aim_target == target.uid:
+        skill += attack.get("acc", 0)
+    return skill + range_penalty(dist) + cover(sim, attacker.pos, target)[0]
+
+
+def friendly_in_line(sim: "Sim", shooter: "Creature", target: "Creature") -> bool:
+    for p in sim.world.line(shooter.pos, target.pos)[:-1]:
+        c = sim.creature_at(p)
+        if c is not None and c.team == shooter.team:
+            return True
+    return False
 
 
 def best_attack_plan(sim: "Sim", attacker: "Creature", target: "Creature",
@@ -110,12 +199,15 @@ def best_attack_plan(sim: "Sim", attacker: "Creature", target: "Creature",
         skill0 = base_skill(sim, attacker, target, attack, item)
         if skill0 is None:
             continue
+        ranged = attack["kind"] == "ranged"
+        if ranged and friendly_in_line(sim, attacker, target):
+            continue
         skill0 += skill_bonus
         dice = attack_dice(attacker, attack)
         dice = Dice(dice.n, dice.sides, dice.add + damage_bonus)
         dtype = sim.content.get("damage_type", attack["damage"]["type"])
-        defended = not surprise and target.can_act
-        defense = target.best_defense(attack["kind"])[1] if defended else None
+        d = defense_against(sim, attacker, target, attack["kind"], surprise)
+        defense = d[1] if d else None
         per_part = {}
         for p in parts:
             part_cap = cap
@@ -128,57 +220,86 @@ def best_attack_plan(sim: "Sim", attacker: "Creature", target: "Creature",
         shots = attack.get("rof", 1)
         if item is not None and item.ammo is not None:
             shots = min(shots, item.ammo)
-        time_s = attack.get("time_ms", 1000) / 1000 * attacker.trait_product("action_time_mult", attack["kind"])
-        for loc, penalty, exp in options:
-            if exp <= 0:
-                continue
-            for dec in range(0, 6):
-                skill = skill0 + penalty - 2 * dec
-                if skill < 3 or (dec and defense is None):
-                    break
-                p_hit = p_success(skill)
-                p_def = p_success(defense - dec) if defense is not None else 0.0
-                hits = min(shots, 1 + max(0.0, skill - 10.5) / attack.get("recoil", 1)) if shots > 1 else 1
-                value = p_hit * (1 - p_def) * hits * exp / time_s
-                if best is None or value > best.value:
-                    best = AttackPlan(attack, item, dice, skill, loc, dec, value)
+        speed_mult = attacker.trait_product("action_time_mult", attack["kind"])
+        shot_ms = attack.get("time_ms", 1000) * speed_mult
+        variants = [(skill0, shot_ms, False)]
+        if ranged and attack.get("acc", 0) and attacker.aim_target != target.uid:
+            variants.append((skill0 + attack["acc"], shot_ms + AIM_MS * speed_mult, True))
+        for skill_v, ms, aim in variants:
+            for loc, penalty, exp in options:
+                if exp <= 0:
+                    continue
+                for dec in range(0, 6):
+                    skill = skill_v + penalty - 2 * dec
+                    if skill < 3 or (dec and defense is None):
+                        break
+                    p_hit = p_success(skill)
+                    p_def = p_success(defense - dec) if defense is not None else 0.0
+                    hits = min(shots, 1 + max(0.0, skill - 10.5) / attack.get("recoil", 1)) if shots > 1 else 1
+                    value = p_hit * (1 - p_def) * hits * exp / (ms / 1000)
+                    if best is None or value > best.value:
+                        best = AttackPlan(attack, item, dice, skill, loc, dec, value, aim, int(ms))
     return best
 
 
 # -- resolution ------------------------------------------------------------
 def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: AttackPlan,
                    surprise: bool = False) -> int:
-    """Carry out an attack; returns the time it took in ms."""
+    """Carry out a planned attack (or the aiming before it); returns the time
+    it took in the attacker's own ms."""
     attack, item = plan.attack, plan.item
     ranged = attack["kind"] == "ranged"
+    speed_mult = attacker.trait_product("action_time_mult", attack["kind"])
+    face(attacker, target.pos)
+    if plan.aim_first:
+        attacker.aim_target = target.uid
+        sim.log(f"{attacker.name} takes aim at {target.name}.")
+        return int(AIM_MS * speed_mult)
+
+    time_ms = int(attack.get("time_ms", 1000) * speed_mult)
+    attacker.exert(attack.get("fatigue", 0.05 if ranged else 0.3))
     shots = attack.get("rof", 1)
     if item is not None and item.ammo is not None:
         shots = min(shots, item.ammo)
         item.ammo -= shots
+    if ranged:
+        attacker.aim_target = None
     where = f" (aiming for the {target.body.part(plan.location).name})" if plan.location else ""
     verb = attack.get("verb", attack["name"])
     roll = check(sim.rng, plan.skill)
-    time_ms = int(plan.time_ms * attacker.trait_product("action_time_mult", attack["kind"]))
+
     if not roll.success:
         sim.log(f"{attacker.name} {verb} {target.name}{where} and misses "
                 f"(rolled {roll.roll} vs {plan.skill}).")
         if ranged:
-            _stray(sim, attacker, target, plan)
+            penalty, blocker = cover(sim, attacker.pos, target)
+            if blocker is not None and roll.margin >= penalty:
+                _hit_cover(sim, attacker, target, plan, blocker)
+                shots -= 1
+            _stray_rounds(sim, attacker, target, plan.dice, shots)
         return time_ms
 
     hits = 1
     if ranged and shots > 1:
         hits = min(shots, 1 + roll.margin // attack.get("recoil", 1))
-    if not surprise and target.can_act and not roll.critical:
-        name, value = target.best_defense(attack["kind"])
+    strays = shots - hits
+    defense = None if roll.critical else defense_against(sim, attacker, target, attack["kind"], surprise)
+    if defense is not None:
+        name, value = defense
+        _spend_defense(sim, target)
         d = check(sim.rng, value - plan.deceptive)
         if d.success:
-            blocked = min(hits, 1 + d.margin)
+            blocked = min(hits, max(1, 1 + d.margin))
             hits -= blocked
+            strays += blocked if ranged else 0
             if hits == 0:
                 sim.log(f"{attacker.name} {verb} {target.name}{where}, but {target.name} {name}.")
+                if ranged:
+                    _stray_rounds(sim, attacker, target, plan.dice, strays)
                 return time_ms
     tag = " (critical!)" if roll.critical else " (unaware!)" if surprise else ""
+    if not surprise and defense is None and not roll.critical and target.conscious:
+        tag = " (from behind!)"
     sim.log(f"{attacker.name} {verb} {target.name}{where}{tag}" + (f" - {hits} hits" if hits > 1 else "") + ".")
 
     cover_dr = 0
@@ -192,30 +313,60 @@ def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: A
                 sim.log(f"The {mat['name']} shatters!")
                 sim.terrain_changed()
     for _ in range(hits):
-        if target.dead:
-            break
         raw = max(1, plan.dice.roll(sim.rng) - cover_dr)
         loc = plan.location if plan.location and not target.body.part(plan.location).destroyed else None
         deal_damage(sim, target, raw, attack["damage"]["type"], loc, source=attacker,
                     origin=attacker.pos)
+    if ranged and strays:
+        _stray_rounds(sim, attacker, target, plan.dice, strays)
     return time_ms
 
 
-def _stray(sim: "Sim", attacker: "Creature", target: "Creature", plan: AttackPlan) -> None:
-    """A missed shot keeps going and chews up whatever it hits."""
-    ax, ay, az = attacker.pos
+def _hit_cover(sim: "Sim", attacker: "Creature", target: "Creature", plan: AttackPlan,
+               blocker: "Pos") -> None:
+    """The round hits what the target is hiding behind, and may go through it."""
+    mat = sim.world.fill_mat(blocker)
+    raw = max(1, plan.dice.roll(sim.rng))
+    broke = sim.world.damage_fill(blocker, raw)
+    through = raw - mat.get("dr", 0)
+    if broke:
+        sim.terrain_changed()
+    if through > 0:
+        sim.log(f"  The round punches through the {mat['name']} into {target.name}!")
+        deal_damage(sim, target, through, plan.attack["damage"]["type"], source=attacker,
+                    origin=attacker.pos)
+    else:
+        sim.log(f"  The round smacks into the {mat['name']} {target.name} is hiding behind.")
+
+
+def _stray_rounds(sim: "Sim", shooter: "Creature", target: "Creature", dice: Dice, rounds: int) -> None:
+    """Rounds that missed or were dodged keep going: into bystanders, through
+    thin walls, and eventually into something solid."""
+    if rounds <= 0:
+        return
+    sx, sy, sz = shooter.pos
     tx, ty, tz = target.pos
-    far = (tx + (tx - ax) * 3, ty + (ty - ay) * 3, tz)
-    for p in sim.world.line(target.pos, far):
-        if not sim.world.in_bounds(p):
-            return
-        if sim.world.fill_mat(p).get("solid"):
+    far = (tx + (tx - sx) * 4, ty + (ty - sy) * 4, tz + (tz - sz) * 4)
+    path = sim.world.line(shooter.pos, far)
+    for _ in range(rounds):
+        dmg = dice.roll(sim.rng)
+        for p in path:
+            if not sim.world.in_bounds(p) or dmg <= 0:
+                break
+            if p != target.pos:
+                other = sim.creature_at(p, include_down=True)
+                if other is not None and other is not shooter and check(sim.rng, BYSTANDER_HIT).success:
+                    sim.log(f"  A stray round hits {other.name}!")
+                    deal_damage(sim, other, dmg, "pierce", source=shooter, origin=shooter.pos)
+                    break
             mat = sim.world.fill_mat(p)
-            if sim.world.damage_fill(p, plan.dice.roll(sim.rng)):
-                sim.log(f"A stray round punches through the {mat['name']}.")
-                sim.terrain_changed()
-                continue
-            return
+            if mat.get("solid"):
+                if sim.world.damage_fill(p, dmg):
+                    sim.log(f"  A stray round punches through the {mat['name']}.")
+                    sim.terrain_changed()
+                dmg -= mat.get("dr", 0)
+                if dmg <= 0 or sim.world.fill_mat(p).get("solid"):
+                    break
 
 
 def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id: str | None = None,
@@ -225,6 +376,7 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
     if part_id is None or target.body.part(part_id).destroyed:
         part_id = target.body.roll_location(sim.rng)
     dr = target.dr(part_id, dtype_id)
+    prev_hp = target.hp
     inj = target.body.wound(part_id, raw, dr, dtype)
     armor = f" - DR {dr}" if dr else ""
     if target.dead:
@@ -232,18 +384,23 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
     elif not inj.penetrated:
         sim.log(f"  {raw} {dtype_id} to {target.name}'s {inj.part.name} doesn't get through (DR {dr}).")
     else:
+        p = inj.part.data
         notes = []
         if inj.newly_destroyed:
-            notes.append(inj.part.data.get("destroy_text", "destroyed") + "!")
+            notes.append(p.get("destroy_text", "destroyed") + "!")
             notes += [f"{n} lost" for n in inj.lost]
+        elif inj.newly_fractured:
+            notes.append(p.get("fracture_text", "bone broken") + "!")
         elif inj.newly_crippled:
             notes.append("crippled!")
+        if inj.internal:
+            notes.append("internal bleeding")
         sim.log(f"  {raw} {dtype_id}{armor} to the {inj.part.name} -> {inj.injury} injury. "
                 f"{target.name}: {round(target.hp)}/{target.max_hp} HP" + (f"; {', '.join(notes)}" if notes else ""))
-        pain = inj.injury / max(1.0, target.max_hp / 10)
-        if not target.has_trait("high_pain_threshold"):
-            target.shock = min(4, target.shock + int(pain))
-        _after_injury(sim, target, inj)
+        shock = int(inj.injury / max(1.0, target.max_hp / 10) * target.trait_product("pain_mult"))
+        target.shock = min(4, target.shock + shock)
+        target.aim_target = None
+        _after_injury(sim, target, inj, prev_hp)
         if not target.dead:
             sim.fire_hooks(target, "on_damaged", source, {"damage": inj.injury})
         if source is not None and not source.dead and target.dead:
@@ -255,71 +412,88 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
     return inj
 
 
-def _after_injury(sim: "Sim", c: "Creature", inj: Injury) -> None:
+def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> None:
     part = inj.part
-    if inj.newly_destroyed and part.data.get("fatal_if_destroyed"):
-        kill(sim, c)
+    mh = c.max_hp
+    if inj.newly_destroyed:
+        if part.data.get("fatal_if_destroyed"):
+            kill(sim, c, part.data.get("death_text", f"{part.name} destroyed"))
+            return
+        status = part.data.get("destroy_status")
+        if status:
+            c.add_status(status, None)
+    if c.body.hypoxia >= 100:
+        kill(sim, c, "brain destroyed")
         return
-    if inj.newly_crippled:
-        if "grasp" in part.tags and c.wielded is not None and (
-                part.data.get("primary") or c.wielded.data.get("two_handed")):
-            sim.log(f"  {c.name} drops the {c.wielded.name}.")
-            c.wielded = None
-        if "stance" in part.tags and not c.has_status("prone"):
+    if c.hp <= -5 * mh:
+        kill(sim, c, "torn apart")
+        return
+    if inj.newly_crippled or inj.newly_destroyed:
+        check_grip(sim, c)
+        if not c.body.functional_with("stance") and c.body.total_with("stance") and not c.has_status("prone"):
             sim.log(f"  {c.name} collapses.")
             c.add_status("prone", None)
-    check_hp_thresholds(sim, c)
-    if c.dead or not c.conscious:
+        elif "stance" in part.tags and not c.has_status("prone"):
+            sim.log(f"  {c.name} goes down.")
+            c.add_status("prone", None)
+    if not c.conscious:
         return
-    kd = part.data.get("knockdown_mod", 0)
-    if inj.injury > c.max_hp / 2:
+
+    # Falling below 0 HP (or another -HP) with this hit: stay conscious?
+    below = math.floor(-c.hp / mh) + 1 if c.hp <= 0 else 0
+    was_below = math.floor(-prev_hp / mh) + 1 if prev_hp <= 0 else 0
+    if below > was_below and not check(sim.rng, c.stat("CON") - (below - 1)).success:
+        knock_out(sim, c, "from the trauma")
+        return
+
+    if inj.injury > mh / 2:
+        kd = part.data.get("knockdown_mod", 0)
         r = check(sim.rng, c.stat("CON") + kd + int(c.trait_sum("knockdown_bonus")))
-        if r.success:
-            return
-        if r.margin <= -5 or r.fumble:
-            knock_out(sim, c)
-        else:
+        if not r.success:
+            if r.margin <= -5 or r.fumble:
+                knock_out(sim, c, "cold")
+                return
             sim.log(f"  {c.name} is knocked down and stunned.")
             c.add_status("prone", None)
-            c.add_status("stunned", sim.time + 2000)
+            sim.apply_status(c, "stunned", 2000)
+    if (inj.injury >= mh / 3 or inj.newly_fractured or inj.newly_destroyed) \
+            and not c.has_status("stunned") and not c.has_status("agony"):
+        r = check(sim.rng, c.stat("WIS") + int(c.trait_sum("pain_resist")))
+        if not r.success:
+            sim.log(f"  {c.name} doubles over in agony.")
+            sim.apply_status(c, "agony", 2000 if r.margin > -5 else 4000)
 
 
-def check_hp_thresholds(sim: "Sim", c: "Creature") -> None:
-    """GURPS-style death checks each time HP crosses another -1xHP."""
-    if c.dead:
-        return
-    mh = c.max_hp
-    if c.hp <= -5 * mh:
-        kill(sim, c)
-        return
-    below = math.floor(-c.hp / mh) if c.hp < 0 else 0
-    while c.death_checks < below:
-        c.death_checks += 1
-        if not check(sim.rng, c.stat("CON")).success:
-            kill(sim, c)
-            return
+def check_grip(sim: "Sim", c: "Creature") -> None:
+    if c.wielded is not None and not c.can_grip(c.wielded):
+        sim.log(f"  {c.name} drops the {c.wielded.name}.")
+        sim.drop(c.pos, c.wielded)
+        c.wielded = None
 
 
-def knock_out(sim: "Sim", c: "Creature") -> None:
+def knock_out(sim: "Sim", c: "Creature", why: str = "") -> None:
     if c.conscious:
-        sim.log(f"  {c.name} falls unconscious.")
+        sim.log(f"  {c.name} falls unconscious{' ' + why if why else ''}.")
         c.add_status("unconscious", None)
         c.add_status("prone", None)
 
 
-def kill(sim: "Sim", c: "Creature") -> None:
+def kill(sim: "Sim", c: "Creature", cause: str) -> None:
     if not c.dead:
         c.dead = True
+        c.death_cause = cause
         c.statuses.clear()
-        c.body.bleed_rate = 0.0
-        sim.log(f"  {c.name} dies.")
+        c.body.bleed_rate = c.body.internal_bleed = 0.0
+        sim.log(f"  {c.name} dies ({cause}).")
 
 
 def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int) -> None:
+    """Momentum doesn't care about armor: knockback uses the damage rolled,
+    not what got through (a riot shield still gets shoved)."""
     if tiles <= 0:
         return
-    dx = (target.pos[0] > origin[0]) - (target.pos[0] < origin[0])
-    dy = (target.pos[1] > origin[1]) - (target.pos[1] < origin[1])
+    dx = _sign(target.pos[0] - origin[0])
+    dy = _sign(target.pos[1] - origin[1])
     if dx == dy == 0:
         dx, dy = sim.rng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
     sim.log(f"  {target.name} is hurled back {tiles} tile{'s' * (tiles > 1)}!")
@@ -351,6 +525,7 @@ def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int) -> None
         target.pos = nxt
         if not world.supported(nxt):
             break
+    target.aim_target = None
     if not target.dead and not target.has_status("prone"):
         if not check(sim.rng, target.stat("DEX") - (tiles - 1)).success:
             target.add_status("prone", None)
@@ -358,11 +533,7 @@ def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int) -> None
 
 
 def use_power(sim: "Sim", c: "Creature", power: dict, target: "Creature | None") -> int:
-    cost = power.get("cost", {})
-    c.stamina -= cost.get("stamina", 0)
-    if c.stamina < 0:
-        c.body.hp += c.stamina  # overexertion eats into HP
-        c.stamina = 0
+    c.stamina -= power.get("cost", {}).get("stamina", 0)
     sim.log(f"{c.name} uses {power['name']}!")
     ctx = effects.Ctx(sim, c, target)
     effects.run(power["effects"], ctx)

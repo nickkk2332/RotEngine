@@ -33,83 +33,179 @@ gives you balance tests, reproducible bug reports, and later replays or netplay.
 | Stat | Drives |
 |---|---|
 | **ST** | HP (= ST), muscle damage (thrust / swing), knockback resistance |
-| **CON** | Stamina (= CON), knockdown / consciousness / death / bleeding rolls, speed |
-| **DEX** | Speed, default skill level (untrained = DEX-4), dodge |
-| **INT** | (planned) skill learning, tactics AI tier, tech/crafting checks |
-| **WIS** | (planned) perception, willpower, fear and pain resistance |
+| **CON** | Stamina (= CON), knockdown / consciousness / clotting rolls, speed |
+| **DEX** | Speed, most combat skill defaults, dodge |
+| **INT** | First aid (default INT−4). Planned: skill learning, tactics AI tier, tech/crafting |
+| **WIS** | Resisting agony; every point over 10 takes 0.5 off the pain penalty. Planned: perception, morale |
+
+HP = ST and STAM = CON (confirmed). Templates can buy extra of either with
+`hp_bonus` / `stamina_bonus`.
 
 * Speed = (DEX + CON) / 4. Move = floor(Speed) tiles/sec. Dodge = floor(Speed) + 3.
 * Parry = skill/2 + 3 + weapon modifier.
 * Muscle damage: thrust mean ≈ 0.35·ST − 2 and swing mean ≈ 0.55·ST − 2, converted to
-  d6s (`combat.st_damage`). ST 10 punches for 1d-2; ST 60 punches for 5d+2.
+  d6s (`combat.st_damage`). ST 10 punches for 1d−2; ST 60 punches for 5d+2.
+* Skill defaults come from `skill` JSON objects (`{"stat": "INT", "default": -4}`), or
+  DEX−4 for skills with no definition.
 
-HP = ST and STAM = CON (confirmed). Templates can buy extra of either with
-`hp_bonus` / `stamina_bonus`. INT (learning, tactics, tech) and WIS (perception,
-willpower, morale, pain) are confirmed as described above and not wired in yet.
+## 3. Time and tempo
 
-## 3. Resolution
+Time is continuous, in milliseconds of world time. Each creature acts, pays the
+action's cost **in its own time**, and acts again when that has elapsed. Own time
+converts to world time by dividing by the creature's **tempo** (1 for humans; traits
+and statuses multiply it).
+
+| Action (own time) | Cost |
+|---|---|
+| Attack | weapon `time_ms` (1 s default; `gun_fu` ×0.6 for shooting) |
+| Aim | 1 s: adds the weapon's accuracy to the next shot at that target |
+| Move one tile | 1 s ÷ Move (1 tile/s limping, 2 s crawling) |
+| Get up | 1 s |
+| Reload | 2 s pistol, 3 s rifle |
+| First aid | 5 s |
+
+A tempo-8 speedster therefore gets 8 actions for every human action. Tempo also
+reaches into every other time-based rule:
+* **Reaction window:** a defense uses up 1 s of the defender's own time (125 ms for the
+  speedster). Each further defense inside the window is at −2.
+* **Seeing it coming:** defense is +2 per doubling of the defender's tempo over the
+  attacker's, and −2 per halving. That's ±6 between a human and a tempo-8 speedster.
+  With a 4× edge a rear attack counts as a side attack; with 16× it counts as frontal.
+* **Subjective statuses** (stun, agony) wear off on the creature's own clock.
+* **Momentum:** traits with `momentum_exponent` scale muscle damage by tempo^exp.
+  Super speed uses 0.5, so ST 11 hits like ST 31.
+* Stamina recovery runs on own time too.
+
+A 1-second world tick handles physiology for everyone: bleeding, clotting,
+hypoxia, fainting and waking, stamina recovery, statuses running out, `on_second` hooks.
+
+## 4. Resolution
 
 **Checks:** roll 3d6 ≤ target. 3–4 always succeed and 17–18 always fail. Crits on 3–4
 (5 at 15+, 6 at 16+). Margin = target − roll.
 
-**Attacks** (`combat.py`):
-1. Effective skill = skill + accuracy + range penalty (−2 at 5 tiles, −4 at 10, −8 at 50)
-   − shock + status modifiers + hit-location penalty − 2 per level of deceptive attack.
-2. Hit if the roll succeeds. Rapid fire: 1 extra hit per `recoil` points of margin.
-3. The defender rolls their best defense (dodge, or parry against melee), minus 1 per
-   deceptive level. Each point of defense margin stops another hit. Unaware or stunned
-   targets and critical hits get no defense.
-4. Each hit: roll damage, subtract DR (armor + natural + part), multiply by the wound
-   multiplier (damage type × location), then apply to the body.
+**Attacks** (`combat.py`). Effective skill = skill
++ weapon accuracy (only if the shooter aimed at this target last action)
++ range penalty (−2 at 5 tiles, −4 at 10, −8 at 50)
++ cover (−1 per blocked corner of the target's tile, −4 when mostly hidden)
++ hit location (vitals −3, face/neck −5, skull −7)
+− 2 per level of deceptive attack
+− shock − pain − blood loss − fatigue − status modifiers (prone −4).
 
-**The attack planner** (`best_attack_plan`) computes expected injury per second for
-every attack × location × deceptive-level combination, using exact dice distributions.
-Nobody hard-codes "Wick aims for the head". A skill-20 shooter works out that the
-vitals are worth −3, and a skill-11 thug works out that he isn't good enough. Any
-modded creature gets this for free.
+**Hit:** if the roll succeeds. Rapid fire gives one extra hit per `recoil` points of margin.
 
-## 4. Bodies and wounds (`body.py`, `data/core/bodies.json`)
+**Defense** is the best of dodge, or parry against melee, then modified:
 
-A body plan is a list of parts: hit `weight`, called-shot `hit_penalty`, `wound_mult`
-per damage type, `tags` (`grasp`, `stance`), `cripple_at` / `destroy_at` as fractions of
-max HP, `parent` (lose the arm and you lose the hand), `fatal_if_destroyed`,
-`knockdown_mod`, `bleed_mult`.
+| Situation | Modifier |
+|---|---|
+| Attack from the rear 3/8 of the circle | no defense |
+| Attack from the side | −2 |
+| Each earlier defense still inside the reaction window | −2 |
+| Relative tempo | ±2 per doubling |
+| Stunned or in agony | −4 |
+| Prone | −3 |
+| Pain | half the pain penalty |
+| Blood loss / fatigue | the same penalty as for attacks |
+| Unconscious, taken by surprise (blink), or a critical hit | no defense |
 
-* **HP pool:** every wound comes off HP. Limbs only count up to their crippling
-  threshold: a shotgun to the hand wrecks the hand, not your life.
-* **Crippling:** a crippled `grasp` part drops the weapon, and a crippled `stance` part
-  puts you on the ground.
-* **Severing / pulping:** `dismembers` damage types (cut, crush) destroy parts that
-  take ≥ `destroy_at`. The skull caves in; the neck decapitates.
-* **Shock:** −1 per HP/10 of injury (max −4) on your next action. High pain threshold ignores it.
-* **Major wound** (> HP/2 in one hit): CON roll, with a skull −10 / face and vitals −5
-  modifier, or be knocked down and stunned (fail by 5+: out cold).
-* **HP ≤ 0:** CON roll every turn to stay conscious. At each −HP multiple, a CON roll
-  or die. At −5×HP you're dead.
-* **Bleeding:** cut/impale/pierce wounds bleed per second. Every 10s a CON roll halves
-  it (critical: stops it). Fights end with people bleeding out after the shooting stops.
+A successful defense stops one hit, plus one more per point of margin.
 
-## 5. Scaling: why the Hulk and John Wick work
+**Rounds are physical.** A missed shot that fails by no more than the cover penalty
+hits the cover, and punches through into the target if it beats the cover's DR. Every
+round that misses, gets dodged or isn't part of the hit count keeps flying. It can hit
+anyone in its path (3d6 ≤ 9), downed people included, then damages and possibly
+penetrates walls. Shooters won't fire with a teammate in the line of fire.
+
+**Damage:** roll, subtract DR (part + natural + armor covering that part, per damage
+type), multiply by the wound multiplier (damage type × location). Skull ×4; vitals ×3
+for piercing weapons; neck ×2 for cuts; cut ×1.5, impale ×2.
+
+**The attack planner** (`best_attack_plan`) computes expected injury per second of
+the attacker's time for every attack × location × feint level × aim-or-fire-now option,
+using exact dice distributions. It ignores overkill. Wick aims for the vitals; a
+skill-11 thug takes a second to aim and shoots center mass.
+
+## 5. Bodies, wounds and death (`body.py`, `data/core/bodies.json`)
+
+The design rule: **incapacitation is common, and death has a physical cause.**
+Losing HP knocks people out. It kills directly only when the body is literally torn
+apart (−5×HP). Otherwise death comes from one of three things:
+
+| Cause | How |
+|---|---|
+| **Brain or neck destroyed** | Skull or neck damage past `destroy_at` (1.5× / 2× HP, any damage type). Instant. |
+| **Bled out** | Blood below 50% starts brain hypoxia (faster the lower it goes). Hypoxia 100 = death. |
+| **Brain death** | Vitals destroyed means cardiac arrest: seconds of consciousness, then hypoxia at 0.5/s (about 3.5 minutes). |
+
+**The layers of a wound:**
+* **HP (trauma):** limbs only count up to their crippling point, so a leg can't take
+  you below that no matter what hits it.
+* **Crippling:** an arm or leg past HP/2, a hand or foot past HP/3. A crippled arm
+  disables its hand (parts check their parents), so the weapon drops to the floor. A
+  crippled leg puts you down; with no working legs you crawl.
+* **Fractures:** blunt damage (types with `fractures`) past a part's `fracture_at`
+  breaks bones: ribs, skull, jaw, pelvis, limbs. Each fracture adds pain; a broken limb
+  is crippled.
+* **Destruction:** cutting or crushing takes off limbs at `destroy_at`, along with their
+  hands or feet, and severed limbs bleed arterially. Parts marked `organ`
+  (skull/brain, neck, vitals) can be destroyed by any damage type.
+* **Bleeding:** external bleeding is `injury/HP × type bleed × part bleed_mult`, in % of
+  blood per second. Cuts and stabs bleed most, blunt force barely at all. Each 10 s a CON
+  roll halves it (at −4 for arterial bleeds over 1%/s). First aid takes 5 s and reduces
+  it to a quarter, or stops it on a good roll; small bleeds are easier to treat and
+  arteries harder.
+* **Internal bleeding:** deep torso, abdomen and vitals wounds (`internal.at`) bleed
+  inside and never clot. First aid can't touch it, so it needs surgery or a healing
+  power (`stop_bleeding` with `"internal": true`). A gut wound is a slow death sentence
+  without help.
+
+**Pain and consciousness:**
+* **Shock:** −1 per HP/10 of injury (max −4), on the next action only.
+* **Pain:** an ongoing penalty of 4 × (fraction of HP lost) + 1 per fracture, capped at
+  −6. It's halved by high pain threshold and reduced by 0.5 per point of WIS over 10.
+  It applies fully to attacks and half to defense.
+* **Agony:** a wound of HP/3 or more, a fracture, or a lost part means a WIS roll; fail
+  and you're doubled over and helpless for 2 s (4 s if you fail badly).
+* **Knockdown:** a wound over HP/2 means a CON roll (skull −10, face and vitals −5).
+  Fail and you're stunned and prone; fail by 5 and you're out cold.
+* **Unconsciousness:** dropping to ≤ 0 HP (or past another −HP) means a CON roll
+  or pass out, and every turn at ≤ 0 HP needs another roll. Blood under 70% means a
+  CON roll every 10 s; under 60% you're out. You wake (a CON roll every 5 s) only
+  with HP > 0, blood ≥ 60% and a beating heart.
+* **Fatigue:** melee swings (0.2–0.3), shots (0.05) and running (0.05/tile) cost
+  stamina. Recovery is 0.1/s in a fight and 0.5/s resting. Below 1/3 stamina you're
+  winded (−1, half move); at 0 exhausted (−3, quarter move); at −½ you collapse.
+
+**After the fight** the arena keeps the clock running (`aftermath_s`, default 120).
+The wounded bleed, pass out, wake up or die, and the winners bandage each other. The
+report lists who is dead and why.
+
+## 6. Scaling: why the Hulk, John Wick and the speedster work
 
 The balance numbers are checked by `tests/test_arena.py` and `--runs`:
 
 * **Hulk:** DR 25 against a 5d6 rifle means only the far tail (≥ 26, about 3%)
-  penetrates, and then only for a point or two. HP 60 plus regeneration absorbs even
-  that. Going the other way, 5d+2 crushing against a DR 4 vest takes out a soldier per
-  punch, and the knockback (damage ÷ (ST−2) tiles) throws bodies through drywall and
-  off the mezzanine. Result: about 98% wins and never a loss; the remainder are
-  timeouts in odd collapsed geometry. Rage (+1 ST per wound, capped) is a 10-line JSON trait.
-* **Wick:** guns 20 at 6 tiles is 16 after range; −3 for the vitals leaves 13. A pistol's
-  ×3 vitals multiplier means one hit usually drops a man. `gun_fu` makes his shots take
-  0.6 s, so he acts faster than they can. Result: about 83% against 8 thugs.
+  penetrates, and then only for a point or two. HP 60, regeneration and `tireless`
+  absorb the rest. Going the other way, 5d+2 crushing against a DR 4 vest breaks ribs
+  and knocks soldiers out, and the knockback (damage ÷ (ST−2) tiles) throws bodies
+  through drywall and off the mezzanine. Result: 100% wins. Most soldiers survive the
+  fight unconscious; the dead mostly bled out afterwards, and about 1 in 6 were torn
+  apart outright.
+* **Wick:** guns 20 at 6 tiles is 16 after range; −3 for the vitals leaves 13. A 9 mm
+  round to the heart and lungs usually stops the heart. `gun_fu` makes his shots take
+  0.6 s. Result: about 82% against 8 thugs, who mostly die in the aftermath.
+* **Speedster** (tempo 8, ST 11, a knife): he acts 8× as often, defends at +6 against
+  them, and hits like ST 31. Six riflemen at −6 to defend and swamped in their reaction
+  windows go down in about two seconds. Result: about 62%. When he loses, it's to two
+  bursts landing in the same instant: he's still a human body.
 * **Desperate scraps:** two average knife fighters have skill 11 against a dodge of 8 or a
-  parry of 7. The loser usually ends up unconscious and bleeding. About 50/50.
+  parry of 7. The loser ends up unconscious, and sometimes bleeds out later. About 50/50.
 
 The general rule for designing powerful beings: **give them thresholds (DR, huge ST,
-speed, no-defense surprise) rather than multipliers.** Thresholds turn ordinary
+tempo, no-defense surprise) rather than multipliers.** Thresholds turn ordinary
 threats into non-threats, which is what "obviously devastating" means.
 
-## 6. The world (`world.py`)
+## 7. The world (`world.py`)
 
 Voxels in the Dwarf Fortress style. Each (x, y, z) has a **fill** (air, wall, glass,
 stairs) and a **floor** (the slab you stand on, which is also the ceiling of z−1). Both
@@ -131,7 +227,7 @@ items on the ground, thrown objects and bodies, fire, smoke, gas and liquids as 
 cellular automata, explosions with overpressure and fragments, light and noise maps
 for stealth.
 
-## 7. Modding reference
+## 8. Modding reference
 
 ### Content types
 `material`, `damage_type`, `body_plan`, `item`, `trait`, `status`, `power`, `creature`,
@@ -159,7 +255,7 @@ An effect list is a list of single-op objects:
 | `if` / `then` / `else` | `roll` `{stat\|skill\|vs, who, mod}` | number, `"2d6+1"` |
 | `message` `"{self} hits {target}"` | `compare [a, op, b]` | `{stat: {stat, who}}` |
 | `damage {amount, type, location, who}` | `chance p` | `{var: name}` |
-| `heal`, `stop_bleeding {fraction}` | `has_status`, `has_trait` | `{hp: {who}}`, `{stamina: {who}}` |
+| `heal`, `restore_blood`, `stop_bleeding {fraction, internal}` | `has_status`, `has_trait` | `{hp: {who}}`, `{stamina: {who}}` |
 | `modify_stat {stat, amount, max_bonus}` | `has_target`, `sees_target` | `{distance_to_target: {}}` |
 | `add_status {id, duration_ms}` / `remove_status` | `target_reachable` | `{count_enemies: {radius}}` |
 | `knockback {distance}` | `and`, `or`, `not` | `add`, `mul`, `min`, `max`, `neg` |
@@ -180,7 +276,7 @@ def ignite(args, ctx): ...
 ```
 (Loading plugin `.py` files from mod folders is on the roadmap. The registry is already there.)
 
-## 8. Roadmap
+## 9. Roadmap
 
 1. **Playable arena (next).** A python-tcod frontend: map with z-level switching (`<` `>`),
    message log, look/inspect (body status per part), and a player-controlled creature
@@ -205,10 +301,19 @@ fields, collapse), keep an "active bubble" of simulated space in the roguelike m
 profile before optimising, and move any proven hot loop to numba/Cython (or Rust via
 PyO3) behind the same API.
 
-## 9. Known gaps / tuning notes
+## 10. Known gaps / tuning notes
 
-* The assassin scenario is hard (~10%), and that is intended: teleporting doesn't
+* The assassin scenario is hard (~6%), and that is intended: teleporting doesn't
   help against bullets you can't react to. Stealth is how she should win.
-* The AI is deliberately basic: best expected-value attack, reload, close distance,
-  seek line of sight. It has no cover use, retreat or morale yet (WIS will drive morale).
+* The AI is still basic: best expected-value attack or aim, reload, close in, seek line
+  of sight, avoid friendly fire, bandage when safe, deal with armed enemies before
+  crippled ones. It has no seeking cover, retreat, suppression or morale yet
+  (WIS will drive morale).
 * Floors can span any distance from a support. Span limits are needed for realistic collapse.
+* Dropped weapons lie on the ground (`sim.items`) but nobody picks them up yet.
+* Surgery (the fix for internal bleeding) is only possible through effects so far.
+
+**Trait and status fields the engine reads:** `natural_dr`, `stat_mods`, `speed_bonus`,
+`dodge_bonus`, `parry_bonus`, `move_mult`, `tempo`, `momentum_exponent`,
+`action_time_mult`, `exertion_mult`, `pain_mult`, `pain_resist`, `knockdown_bonus`,
+`hooks`. Statuses also: `prevents_action`, `attack_mod`, `defense_mod`, `subjective`.

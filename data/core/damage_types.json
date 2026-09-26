@@ -1,6 +1,6 @@
 [
   {"type": "damage_type", "id": "crush", "name": "crushing", "wound_mult": 1.0,
-   "bleed": 0.25, "knockback": true, "dismembers": true},
+   "bleed": 0.1, "knockback": true, "dismembers": true, "fractures": true},
   {"type": "damage_type", "id": "cut", "name": "cutting", "wound_mult": 1.5,
    "bleed": 1.0, "dismembers": true},
   {"type": "damage_type", "id": "pierce", "name": "piercing", "wound_mult": 1.0, "bleed": 0.8},

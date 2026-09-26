@@ -1,10 +1,10 @@
 """Baseline combat AI.
 
 Deliberately simple: use a power if its JSON ai_condition says so, reload when
-empty, otherwise take the attack with the best expected value (see
-combat.best_attack_plan), or close the distance. The cleverness is in the
-expected-value planner rather than here, so modded creatures fight sensibly
-without new code.
+empty, patch up bleeding when nobody is shooting at you, otherwise take the
+attack (or aim) with the best expected value (see combat.best_attack_plan),
+or close the distance. The cleverness is in the expected-value planner rather
+than here, so modded creatures fight sensibly without new code.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import heapq
 from typing import TYPE_CHECKING, Callable
 
 from . import combat, effects
+from .dice import check
 
 if TYPE_CHECKING:
     from .creature import Creature
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
     from .world import Pos
 
 MAX_PATH_NODES = 3000
+MOVE_EXERTION = 0.05
+FIRST_AID_MS = 5000
 
 
 def take_turn(sim: "Sim", c: "Creature") -> int:
@@ -28,10 +31,18 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
             sim.log(f"{c.name} gets back up.")
             return 1000
     enemies = sim.enemies_of(c)
+    visible = [e for e in enemies if sim.world.has_los(c.pos, e.pos)]
+    if not visible:
+        aid = _first_aid(sim, c, allies=not enemies)
+        if aid is not None:
+            return aid
     if not enemies:
         return 1000
-    target = _choose_target(sim, c, enemies)
+    target = _choose_target(sim, c, enemies, visible)
+    if c.target is not target:
+        c.aim_target = None
     c.target = target
+    combat.face(c, target.pos)
 
     for power in c.powers:
         if c.stamina < power.get("cost", {}).get("stamina", 0):
@@ -67,8 +78,43 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
         step = _step_toward(sim, c, target.pos, lambda p: sim.world.has_los(p, target.pos))
     if step is None:
         return 500
+    return _move(sim, c, step)
+
+
+def _move(sim: "Sim", c: "Creature", step: "Pos") -> int:
     sim.move_creature(c, step)
+    c.exert(MOVE_EXERTION)
     return 2000 if c.has_status("prone") else int(1000 / c.move_per_second)
+
+
+def _first_aid(sim: "Sim", c: "Creature", allies: bool) -> int | None:
+    """Bandage the worst external bleeding in reach: your own while nobody is
+    in sight, your friends' once the fighting is over."""
+    if not c.body.functional_with("grasp"):
+        return None
+    patients = [c] if c.body.bleed_rate > 0.05 else []
+    if allies:
+        patients += [a for a in sim.creatures if a.team == c.team and a is not c
+                     and not a.dead and a.body.bleed_rate > 0.05]
+    if not patients:
+        return None
+    patient = max(patients, key=lambda a: (a.body.bleed_rate, -sim.distance(c, a)))
+    if patient is not c and not sim.in_melee_reach(c.pos, patient.pos):
+        step = _step_toward(sim, c, patient.pos)
+        return _move(sim, c, step) if step is not None else None
+    bleed = patient.body.bleed_rate
+    severity = 3 if bleed < 0.5 else 0 if bleed < 1.5 else -3  # pressure on a nick vs. an artery
+    skill = c.skill("first_aid") + severity - c.action_penalty() - (2 if patient is c else 0)
+    r = check(sim.rng, skill)
+    who = "their own wounds" if patient is c else f"{patient.name}'s wounds"
+    if r.success:
+        before = patient.body.bleed_rate
+        patient.body.bleed_rate = 0.0 if r.critical or r.margin >= 5 else before * 0.25
+        note = " The internal bleeding needs a surgeon." if patient.body.internal_bleed > 0.01 else ""
+        sim.log(f"{c.name} binds {who} (bleeding {before:.1f} -> {patient.body.bleed_rate:.1f}%/s).{note}")
+    else:
+        sim.log(f"{c.name} fumbles with {who}.")
+    return FIRST_AID_MS
 
 
 def _has_usable_ranged(c: "Creature") -> bool:
@@ -76,11 +122,18 @@ def _has_usable_ranged(c: "Creature") -> bool:
                for a, item in c.attacks())
 
 
-def _choose_target(sim: "Sim", c: "Creature", enemies: list["Creature"]) -> "Creature":
-    if c.target is not None and c.target.active and sim.world.has_los(c.pos, c.target.pos):
+def _is_threat(e: "Creature") -> bool:
+    """Down, disarmed and unable to stand: finish later, deal with the armed first."""
+    return not (e.has_status("prone") and e.wielded is None and not e.body.functional_with("stance"))
+
+
+def _choose_target(sim: "Sim", c: "Creature", enemies: list["Creature"],
+                   visible: list["Creature"]) -> "Creature":
+    pool = visible or enemies
+    if c.target is not None and c.target in pool and (
+            _is_threat(c.target) or not any(_is_threat(e) for e in pool)):
         return c.target
-    visible = [e for e in enemies if sim.world.has_los(c.pos, e.pos)]
-    return min(visible or enemies, key=lambda e: (sim.distance(c, e), e.uid))
+    return min(pool, key=lambda e: (not _is_threat(e), sim.distance(c, e), e.uid))
 
 
 def can_reach(sim: "Sim", c: "Creature", target: "Creature") -> bool:
@@ -96,6 +149,7 @@ def _step_toward(sim: "Sim", c: "Creature", goal: "Pos",
     if done is None:
         def done(p: "Pos") -> bool:
             return sim.in_melee_reach(p, goal)
+
     world = sim.world
     occupied = {o.pos for o in sim.creatures if o.active and o is not c}
     start = c.pos

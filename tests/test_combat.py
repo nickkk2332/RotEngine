@@ -61,6 +61,7 @@ def test_unaware_targets_get_no_defense(content):
     sim = open_arena(content)
     a = sim.spawn("assassin", "a", (2, 3, 0))
     g = sim.spawn("guard", "b", (3, 3, 0))
+    combat.face(g, a.pos)
     aware = combat.best_attack_plan(sim, a, g)
     surprised = combat.best_attack_plan(sim, a, g, surprise=True)
     assert surprised.value > aware.value

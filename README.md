@@ -14,7 +14,7 @@ the rules, and the roadmap to a playable game.
 ```bash
 pip install -e ".[dev]"          # numpy + pytest; add [ui] later for python-tcod
 python -m rotengine list          # scenarios
-python -m rotengine arena hulk_vs_squad --seed 3 --map    # watch one fight
+python -m rotengine arena hulk_vs_squad --seed 3 --map    # watch one fight (+120s aftermath)
 python -m rotengine arena wick_vs_thugs --runs 200       # balance statistics
 python -m rotengine validate --mod example_mod           # check content + mods
 python -m pytest
@@ -24,8 +24,10 @@ python -m pytest
 
 | | |
 |---|---|
-| **3d6 everything** | Roll-under checks, crits, margin of success. Skill buys called shots and feints, and the AI spends it by expected value. |
-| **Bodies** | Hit locations, wound multipliers, crippling, severing, bleeding, shock, knockdown, unconsciousness and death checks. HP = ST, stamina = CON. |
+| **3d6 everything** | Roll-under checks, crits, margin of success. Skill buys called shots, feints and aimed shots, and the AI spends it by expected value. |
+| **Bodies** | Hit locations, crippling, fractures, severing, organ destruction, blood volume, external and internal bleeding, pain, agony, knockdown and unconsciousness. You die from blood loss, a stopped heart or a destroyed brain, not from an HP bar. HP = ST, stamina = CON. |
+| **Tempo** | Continuous time where each creature runs on its own clock. A tempo-8 speedster acts, reacts and recovers 8× as fast and hits with the momentum of it. |
+| **Tactics** | Facing (no defense from behind), a reaction window that punishes being mobbed, cover, stray rounds that hit bystanders, fatigue, first aid. |
 | **Threshold damage** | DR subtracts, so a rifle mostly bounces off a DR 25 hide, and a ST 60 punch ignores a vest. |
 | **Voxel world** | z-levels, per-voxel walls and floors with HP/DR, bullets through glass and drywall, knockback through walls, falling, and structural collapse. |
 | **JSON content** | Materials, bodies, items, creatures, traits, statuses and powers, with `copy-from`/`relative`/`extend`/`delete` inheritance and mods with dependencies. |
@@ -36,10 +38,11 @@ python -m pytest
 
 | Scenario | Result |
 |---|---|
-| Street fight: two average people with knives | ~50/50, usually ends in someone bleeding out |
-| The Hulk (ST 60, DR 25) vs 10 armoured riflemen | Hulk wins ~98%, soldiers never win, the rest are timeouts |
-| John Wick (guns 20) vs 8 armed thugs | Wick wins ~83% |
-| Blink assassin vs 6 guards, 2 with pistols | Assassin wins ~10%, usually after 3–5 kills. Deliberately hard; needs stealth |
+| Street fight: two average people with knives | ~50/50; the loser is usually unconscious, occasionally bleeds out later |
+| The Hulk (ST 60, DR 25) vs 10 armoured riflemen | Hulk wins 100%; soldiers mostly end up unconscious with broken ribs |
+| John Wick (guns 20) vs 8 armed thugs | Wick wins ~82%; most thugs die of blood loss after the fight |
+| Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~62%; loses to simultaneous bursts |
+| Blink assassin vs 6 guards, 2 with pistols | Assassin wins ~6%, usually after several kills. Deliberately hard; needs stealth |
 
 ## Layout
 

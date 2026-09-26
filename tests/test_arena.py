@@ -42,3 +42,7 @@ def test_same_seed_same_fight():
     a.run()
     b.run()
     assert a.lines == b.lines
+
+
+def test_speedster_is_dangerous():
+    assert win_rates("speedster_vs_squad", 30).get("speedster", 0) >= 0.4

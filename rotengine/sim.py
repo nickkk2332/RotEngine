@@ -1,9 +1,11 @@
 """The simulation: time scheduling, the world tick, and glue between systems.
 
-Time is continuous (milliseconds) rather than turn-based. Every action has a
-cost, and a creature acts again when its cost has elapsed. That is how speed,
-slow reloads and fast characters fall out without special cases. A global
-1-second tick handles bleeding, status expiry and "every second" hooks.
+Time is continuous (milliseconds of world time) rather than turn-based. Every
+action has a cost in the actor's *own* time, which is divided by the actor's
+tempo to get world time. A human with tempo 1 acts once per second of
+fighting; a tempo-10 speedster gets ten actions, ten reaction windows and ten
+times the recovery in that same second. A global 1-second tick handles the
+body: bleeding, hypoxia, clotting, fainting and waking, stamina.
 
 The simulation never touches the screen. The ASCII UI, the arena batch
 runner and the tests all drive the same Sim, and a seed makes it fully
@@ -18,11 +20,12 @@ from typing import Callable
 
 from . import ai, combat, effects
 from .content import Content
-from .creature import Creature
+from .creature import Creature, Item
 from .dice import Dice, check
 from .world import DIRS8, Pos, World
 
 TICK_MS = 1000
+CARDIAC_ARREST_HYPOXIA = 0.5   # brain damage per second with no circulation (~3.5 min to death)
 
 
 class Sim:
@@ -33,8 +36,10 @@ class Sim:
         self.rng = random.Random(seed)
         self.time = 0
         self.creatures: list[Creature] = []
+        self.items: list[tuple[Pos, Item]] = []  # things lying on the ground
         self.lines: list[str] = []
         self.echo = echo
+        self.fighting = True  # False during the aftermath: nobody left to fight
         self._queue: list[tuple[int, int, int]] = []  # (time, seq, uid); uid -1 = world tick
         self._seq = itertools.count()
         self._by_uid: dict[int, Creature] = {}
@@ -43,7 +48,7 @@ class Sim:
 
     # -- bookkeeping -------------------------------------------------------
     def log(self, msg: str) -> None:
-        line = f"[{self.time / 1000:6.1f}s] {msg}"
+        line = f"[{self.time / 1000:6.2f}s] {msg}"
         self.lines.append(line)
         if self.echo:
             self.echo(line)
@@ -53,12 +58,22 @@ class Sim:
                      team, pos, name)
         self.creatures.append(c)
         self._by_uid[c.uid] = c
-        self._schedule(c, self.time + self.rng.randint(0, 300))
+        self._schedule(c, self.time + int(self.rng.randint(0, 300) / c.tempo))
         return c
 
     def _schedule(self, c: Creature, at: int) -> None:
         c.next_time = at
         heapq.heappush(self._queue, (at, next(self._seq), c.uid))
+
+    def apply_status(self, c: Creature, status_id: str, duration_ms: float) -> None:
+        """Timed status. 'subjective' statuses (stun, agony) run on the
+        creature's own clock, so a speedster shakes them off faster."""
+        if self.content.get("status", status_id).get("subjective"):
+            duration_ms /= c.tempo
+        c.add_status(status_id, self.time + duration_ms)
+
+    def drop(self, pos: Pos, item: Item) -> None:
+        self.items.append((pos, item))
 
     # -- spatial queries -------------------------------------------------------
     @staticmethod
@@ -77,9 +92,11 @@ class Sim:
         return dz == 1 and dxy <= 1 and (self.world.fill_mat(a).get("climbable", False)
                                           or self.world.fill_mat(b).get("climbable", False))
 
-    def creature_at(self, pos: Pos) -> Creature | None:
+    def creature_at(self, pos: Pos, include_down: bool = False) -> Creature | None:
+        """The creature occupying pos. Downed bodies don't block movement
+        but can still catch a stray bullet (include_down)."""
         for c in self.creatures:
-            if c.pos == pos and c.active:
+            if c.pos == pos and (c.active or include_down and not c.dead):
                 return c
         return None
 
@@ -101,7 +118,9 @@ class Sim:
 
     # -- movement and falling ------------------------------------------------
     def move_creature(self, c: Creature, pos: Pos) -> None:
+        combat.face(c, pos)
         c.pos = pos
+        c.aim_target = None
         self.check_fall(c)
 
     def check_fall(self, c: Creature) -> None:
@@ -152,13 +171,12 @@ class Sim:
         for kind, (x, y, z) in collapsed:
             if kind != "floor":
                 continue
-            below = self.creature_at((x, y, z - 1))
+            below = self.creature_at((x, y, z - 1), include_down=True)
             if below is not None:
                 self.log(f"Debris crashes down on {below.name}.")
                 combat.deal_damage(self, below, Dice(3, 6).roll(self.rng), "crush", knockback_ok=False)
         for c in self.creatures:
-            if not c.dead:
-                self.check_fall(c)
+            self.check_fall(c)
 
     # -- hooks -------------------------------------------------------------
     def fire_hooks(self, c: Creature, hook: str, target: Creature | None = None,
@@ -175,10 +193,22 @@ class Sim:
     def run(self, max_ms: int = 180_000) -> str | None:
         """Run until one team is left standing. Returns the winner, or None for
         a timeout / mutual wipe."""
-        while self._queue and len(self.active_teams()) > 1:
-            at, _, uid = heapq.heappop(self._queue)
-            if at > max_ms:
-                return None
+        self._loop(lambda: len(self.active_teams()) > 1, max_ms)
+        teams = self.active_teams()
+        return next(iter(teams)) if len(teams) == 1 else None
+
+    def run_aftermath(self, seconds: float) -> None:
+        """Keep the clock running after the fight: the wounded bleed out, pass
+        out or get patched up by whoever is still standing."""
+        self.fighting = False
+        self._loop(lambda: True, self.time + int(seconds * 1000))
+
+    def _loop(self, keep_going: Callable[[], bool], until_ms: int) -> None:
+        while self._queue and keep_going():
+            at, _, uid = self._queue[0]
+            if at > until_ms:
+                return
+            heapq.heappop(self._queue)
             self.time = at
             if uid == -1:
                 self._tick()
@@ -187,25 +217,28 @@ class Sim:
                 c = self._by_uid[uid]
                 if c.dead or c.next_time != at:
                     continue
-                self._schedule(c, at + max(50, self._act(c)))
+                own_ms = self._act(c)
+                self._schedule(c, at + max(1, int(own_ms / c.tempo)))
             if self._terrain_dirty:
                 self._settle()
-        teams = self.active_teams()
-        return next(iter(teams)) if len(teams) == 1 else None
 
     def _act(self, c: Creature) -> int:
         if not c.can_act:
-            return 500
+            return 250
         if c.hp <= 0:
             below = int(-c.hp // c.max_hp)
             if not check(self.rng, c.stat("CON") - below).success:
-                combat.knock_out(self, c)
+                combat.knock_out(self, c, "from the trauma")
                 return 1000
+        if c.stamina <= -c.max_stamina / 2:
+            combat.knock_out(self, c, "from exhaustion")
+            return 1000
         cost = ai.take_turn(self, c)
         c.shock = 0
         return cost
 
     def _tick(self) -> None:
+        """One second of physiology for everyone."""
         second = self.time // TICK_MS
         for c in self.creatures:
             if c.dead:
@@ -213,21 +246,45 @@ class Sim:
             for sid, until in list(c.statuses.items()):
                 if until is not None and until <= self.time:
                     del c.statuses[sid]
-            if c.body.bleed_rate > 0:
-                c.body.hp -= c.body.bleed_rate
-                combat.check_hp_thresholds(self, c)
-                if c.dead:
-                    self.log(f"  ({c.name} bled out.)")
-                    continue
-                if second % 10 == 0:
-                    r = check(self.rng, c.stat("CON"))
-                    if r.success:
-                        c.body.bleed_rate = 0.0 if r.critical else c.body.bleed_rate / 2
-                    if c.body.bleed_rate < 0.02:
-                        c.body.bleed_rate = 0.0
-            if c.has_status("unconscious") and c.hp > 0 and second % 5 == 0:
+            self._blood(c, second)
+            if c.dead:
+                continue
+            resting = not c.conscious or not self.fighting
+            c.stamina = min(c.max_stamina, c.stamina + (0.5 if resting else 0.1) * c.tempo)
+            if c.has_status("unconscious") and second % 5 == 0 and self._can_wake(c):
                 if check(self.rng, c.stat("CON")).success:
                     del c.statuses["unconscious"]
                     self.log(f"{c.name} comes to.")
-            c.stamina = min(c.max_stamina, c.stamina + 0.1)
             self.fire_hooks(c, "on_second")
+
+    def _blood(self, c: Creature, second: int) -> None:
+        b = c.body
+        arrest = c.has_status("cardiac_arrest")
+        b.blood = max(0.0, b.blood - b.total_bleed * (0.2 if arrest else 1.0))  # no pump, little pressure
+        rate = 0.04 * (50 - b.blood) if b.blood < 50 else 0.0
+        if arrest:
+            rate = max(rate, CARDIAC_ARREST_HYPOXIA)
+            if c.conscious and self.rng.random() < 0.15:
+                combat.knock_out(self, c, "as the heart gives out")
+        b.hypoxia += rate
+        if b.hypoxia >= 100:
+            cause = "bled out" if b.blood < 50 and not arrest else "brain death"
+            combat.kill(self, c, cause)
+            return
+        if c.conscious:
+            if b.blood < 60:
+                combat.knock_out(self, c, "from blood loss")
+            elif b.blood < 70 and second % 10 == 0 and not check(self.rng, c.stat("CON")).success:
+                combat.knock_out(self, c, "from blood loss")
+        if b.bleed_rate > 0 and second % 10 == 0:
+            # arterial bleeding (severed limbs, cut throats) rarely clots on its own
+            r = check(self.rng, c.stat("CON") - (4 if b.bleed_rate > 1.0 else 0))
+            if r.success:
+                b.bleed_rate = 0.0 if r.critical else b.bleed_rate / 2
+            if b.bleed_rate < 0.02:
+                b.bleed_rate = 0.0
+
+    def _can_wake(self, c: Creature) -> bool:
+        b = c.body
+        return (c.hp > 0 and b.blood >= 60 and c.stamina > 0
+                and not c.has_status("cardiac_arrest") and b.hypoxia < 50)

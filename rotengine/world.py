@@ -132,6 +132,20 @@ class World:
             prev = p
         return found
 
+    def first_opaque(self, a: Pos, b: tuple[float, float, float], exclude: Pos) -> Pos | None:
+        """First opaque wall voxel on the segment from a's centre to an
+        arbitrary point b (used for partial cover), ignoring a and `exclude`."""
+        n = int(max(abs(b[i] - a[i]) for i in range(3)) * 3) + 1
+        for s in range(1, n + 1):
+            p = tuple(int(math.floor(a[i] + (b[i] - a[i]) * s / n + 0.5)) for i in range(3))
+            if p == a or p == exclude:
+                continue
+            if not self.in_bounds(p):
+                return None
+            if self._opaque[self.fill[p[2], p[1], p[0]]]:
+                return p
+        return None
+
     def has_los(self, a: Pos, b: Pos) -> bool:
         return self.obstacles(a, b) is not None
 

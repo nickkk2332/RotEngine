@@ -1,0 +1,9 @@
+[
+  {"type": "skill", "id": "brawling", "stat": "DEX", "default": -2},
+  {"type": "skill", "id": "knife", "stat": "DEX", "default": -4},
+  {"type": "skill", "id": "sword", "stat": "DEX", "default": -5},
+  {"type": "skill", "id": "clubs", "stat": "DEX", "default": -4},
+  {"type": "skill", "id": "guns", "stat": "DEX", "default": -4},
+  {"type": "skill", "id": "first_aid", "stat": "INT", "default": -4,
+   "description": "Stops external bleeding. Internal bleeding needs surgery."}
+]

@@ -31,6 +31,7 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     "power": ("effects",),
     "creature": ("name", "stats", "body"),
     "tile_legend": ("tiles",),
+    "skill": ("stat",),
 }
 
 _META_KEYS = {"copy-from", "extend", "delete", "relative", "abstract"}

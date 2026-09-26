@@ -305,8 +305,20 @@ def _e_heal(args, ctx):
 
 @effect("stop_bleeding")
 def _e_stop_bleeding(args, ctx):
+    """Reduce external bleeding; "internal": true also closes internal bleeds
+    (surgery, healing factors, magic)."""
     who = ctx.who(args)
-    who.body.bleed_rate *= 1 - evaluate(args.get("fraction", 1), ctx)
+    keep = 1 - evaluate(args.get("fraction", 1), ctx)
+    who.body.bleed_rate *= keep
+    if args.get("internal"):
+        who.body.internal_bleed *= keep
+
+
+@effect("restore_blood")
+def _e_restore_blood(args, ctx):
+    who = ctx.who(args)
+    if not who.dead:
+        who.body.blood = min(100.0, who.body.blood + evaluate(args["amount"], ctx))
 
 
 @effect("modify_stat")
@@ -323,7 +335,10 @@ def _e_modify_stat(args, ctx):
 def _e_add_status(args, ctx):
     who = ctx.who(args)
     dur = args.get("duration_ms")
-    who.add_status(args["id"], None if dur is None else ctx.sim.time + evaluate(dur, ctx))
+    if dur is None:
+        who.add_status(args["id"], None)
+    else:
+        ctx.sim.apply_status(who, args["id"], evaluate(dur, ctx))
 
 
 @effect("remove_status")

@@ -60,6 +60,11 @@ def build(scenario: dict, content: Content, seed: int | None = None,
             numbered[base] += 1
             name = f"{base} {numbered[base]}" if totals[base] > 1 else base
             sim.spawn(g["creature"], team, pos, name)
+    from .combat import face
+    for c in sim.creatures:  # everyone starts facing the nearest enemy
+        foes = [o for o in sim.creatures if o.team != c.team]
+        if foes:
+            face(c, min(foes, key=lambda o: sim.distance(c, o)).pos)
     return sim
 
 
@@ -78,6 +83,7 @@ class Outcome:
     seconds: float
     dead: Counter
     down: Counter
+    causes: Counter
 
 
 def run_once(scenario: dict, content: Content, seed: int | None = None,
@@ -86,16 +92,25 @@ def run_once(scenario: dict, content: Content, seed: int | None = None,
     if show_map and echo:
         echo(render_all(sim))
     winner = sim.run(scenario.get("time_limit_s", 180) * 1000)
+    fight_s = sim.time / 1000
     if echo:
         if show_map:
             echo(render_all(sim))
-        echo(f"\n=== {'Winner: ' + winner if winner else 'No winner'} after {sim.time / 1000:.1f}s ===")
+        echo(f"\n=== {'Winner: ' + winner if winner else 'No winner'} after {fight_s:.1f}s ===")
+    aftermath = scenario.get("aftermath_s", 120)
+    if aftermath:
+        if echo:
+            echo(f"--- aftermath: {aftermath}s later ---")
+        sim.run_aftermath(aftermath)
+    if echo:
         for c in sim.creatures:
-            state = "dead" if c.dead else "unconscious" if not c.conscious else "standing"
-            echo(f"  {c.name:<16} [{c.team}] {state:<11} {c.body.summary()}")
+            state = (f"dead: {c.death_cause}" if c.dead else "unconscious" if not c.conscious
+                     else "standing")
+            echo(f"  {c.name:<16} [{c.team}] {state:<22} {c.body.summary()}")
     dead = Counter(c.team for c in sim.creatures if c.dead)
     down = Counter(c.team for c in sim.creatures if not c.dead and not c.conscious)
-    return Outcome(winner, sim.time / 1000, dead, down)
+    causes = Counter(c.death_cause for c in sim.creatures if c.dead)
+    return Outcome(winner, fight_s, dead, down, causes)
 
 
 def run_batch(scenario: dict, content: Content, runs: int, seed: int = 0) -> str:
@@ -107,11 +122,18 @@ def run_batch(scenario: dict, content: Content, runs: int, seed: int = 0) -> str
         if wins[t] or t is not None:
             lines.append(f"  {t or 'draw':<10} wins {wins[t]:>4}  ({100 * wins[t] / runs:5.1f}%)")
     lines.append(f"  fight length: median {statistics.median(o.seconds for o in outcomes):.1f}s")
+    aftermath = scenario.get("aftermath_s", 120)
+    lines.append(f"  casualties {aftermath}s after the fight:")
     for t in teams:
         size = sum(g.get("count", 1) for g in scenario["teams"][t])
         d = statistics.mean(o.dead[t] for o in outcomes)
         k = statistics.mean(o.down[t] for o in outcomes)
-        lines.append(f"  {t:<10} avg dead {d:4.1f} / down {k:4.1f} of {size}")
+        lines.append(f"    {t:<10} avg dead {d:4.1f} / unconscious {k:4.1f} of {size}")
+    causes = sum((o.causes for o in outcomes), Counter())
+    if causes:
+        total = sum(causes.values())
+        lines.append("  causes of death: " + ", ".join(
+            f"{c} {100 * n / total:.0f}%" for c, n in causes.most_common()))
     return "\n".join(lines)
 
 

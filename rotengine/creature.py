@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from .world import Pos
 
 STATS = ("ST", "CON", "DEX", "INT", "WIS")
-SKILL_DEFAULT_PENALTY = -4  # untrained skills default to DEX-4
+SKILL_DEFAULT = ("DEX", -4)  # a skill with no JSON definition defaults to DEX-4
 
 
 class Item:
@@ -59,10 +59,14 @@ class Creature:
         self.wielded = Item(content.get("item", eq["wield"])) if eq.get("wield") else None
         self.worn = [Item(content.get("item", i)) for i in eq.get("wear", [])]
 
-        self.shock = 0          # pain penalty applied to the next action
+        self.facing: tuple[int, int] = (1, 0)
+        self.shock = 0                    # one-off pain penalty on the next action
+        self.aim_target: int | None = None  # uid we've spent time aiming at
+        self.defense_until = 0            # end of the current reaction window (ms)
+        self.defenses_in_window = 0
         self.dead = False
+        self.death_cause: str | None = None
         self.next_time = 0
-        self.death_checks = 0   # multiples of -HP already survived
         self.target: Creature | None = None
 
     def __repr__(self) -> str:
@@ -75,7 +79,10 @@ class Creature:
     def skill(self, name: str) -> int:
         if name in self.skills:
             return self.skills[name]
-        return self.stat("DEX") + SKILL_DEFAULT_PENALTY
+        if self.content.has("skill", name):
+            sd = self.content.get("skill", name)
+            return self.stat(sd.get("stat", "DEX")) + sd.get("default", -4)
+        return self.stat(SKILL_DEFAULT[0]) + SKILL_DEFAULT[1]
 
     def trait_sum(self, field: str, key: str | None = None) -> float:
         total = 0.0
@@ -86,11 +93,13 @@ class Creature:
             total += v or 0
         return total
 
-    def trait_product(self, field: str, key: str) -> float:
+    def trait_product(self, field: str, key: str | None = None) -> float:
         out = 1.0
         for t in self.traits:
-            v = t.get(field, {})
-            out *= v.get(key, v.get("*", 1.0))
+            v = t.get(field)
+            if isinstance(v, dict):
+                v = v.get(key, v.get("*", 1.0))
+            out *= v if v is not None else 1.0
         return out
 
     def has_trait(self, trait_id: str) -> bool:
@@ -111,6 +120,16 @@ class Creature:
         if status_id in self.statuses and (cur is None or (until is not None and cur >= until)):
             return
         self.statuses[status_id] = until
+
+    # -- time --------------------------------------------------------------
+    @property
+    def tempo(self) -> float:
+        """How fast this creature's time runs. 1 = human. A tempo-10 speedster
+        does ten seconds of acting, reacting and recovering per real second."""
+        t = self.trait_product("tempo")
+        for d in self.status_defs():
+            t *= d.get("tempo", 1.0)
+        return max(0.05, t)
 
     # -- condition ---------------------------------------------------------
     @property
@@ -134,6 +153,34 @@ class Creature:
     def can_act(self) -> bool:
         return self.conscious and not any(d.get("prevents_action") for d in self.status_defs())
 
+    def pain(self) -> int:
+        """Ongoing pain penalty from accumulated trauma and broken bones.
+        WIS above 10 and pain-related traits blunt it."""
+        lost = max(0.0, self.max_hp - self.hp)
+        p = 4 * lost / self.max_hp + self.body.fractures()
+        p *= self.trait_product("pain_mult")
+        p -= max(0, self.stat("WIS") - 10) / 2
+        return max(0, min(6, int(p)))
+
+    def fatigue_level(self) -> int:
+        """0 fresh, 1 winded (< 1/3 stamina), 2 exhausted (<= 0)."""
+        if self.stamina <= 0:
+            return 2
+        return 1 if self.stamina < self.max_stamina / 3 else 0
+
+    def exert(self, amount: float) -> None:
+        """Physical effort (swinging, running). Powers pay their cost directly."""
+        self.stamina -= amount * self.trait_product("exertion_mult")
+
+    def action_penalty(self) -> int:
+        """Everything that makes this creature worse at acting right now."""
+        return (self.shock + self.pain() + self.body.blood_penalty()
+                + (0, 1, 3)[self.fatigue_level()] - int(self.status_sum("attack_mod")))
+
+    def defense_penalty(self) -> int:
+        return (self.pain() // 2 + self.body.blood_penalty() + (0, 1, 3)[self.fatigue_level()]
+                - int(self.status_sum("defense_mod")))
+
     # -- derived combat numbers --------------------------------------------
     @property
     def speed(self) -> float:
@@ -141,15 +188,15 @@ class Creature:
 
     @property
     def move_per_second(self) -> float:
-        base = max(1, math.floor(self.speed)) * self.trait_product("move_mult", "*")
+        """Tiles per second of this creature's own time."""
+        base = max(1, math.floor(self.speed)) * self.trait_product("move_mult")
         legs = self.body.total_with("stance")
         if legs and len(self.body.functional_with("stance")) < legs:
-            base = 1.0  # crawling / hopping
+            base = 1.0  # hopping / limping
         mult = 1.0
         for d in self.status_defs():
             mult *= d.get("move_mult", 1.0)
-        if self.stamina <= 0:
-            mult *= 0.5
+        mult *= (1.0, 0.5, 0.25)[self.fatigue_level()]
         return max(0.25, base * mult)
 
     def dodge(self) -> int:
@@ -162,14 +209,14 @@ class Creature:
                 + int(self.trait_sum("parry_bonus")))
 
     def best_defense(self, incoming_kind: str) -> tuple[str, int]:
+        """Best raw defense, before arcs, reaction windows and penalties."""
         options = [("dodges", self.dodge())]
         if incoming_kind == "melee":
             for atk, _ in self.attacks():
                 p = self.parry(atk)
                 if p is not None:
                     options.append(("parries", p))
-        name, value = max(options, key=lambda o: o[1])
-        return name, value + int(self.status_sum("defense_mod"))
+        return max(options, key=lambda o: o[1])
 
     def dr(self, part_id: str, dtype: str) -> int:
         def lookup(table: dict) -> int:
@@ -184,6 +231,12 @@ class Creature:
             if item.armor and part_id in item.armor["covers"]:
                 total += lookup(item.armor["dr"])
         return total
+
+    def can_grip(self, item: Item) -> bool:
+        hands = self.body.functional_with("grasp")
+        if item.data.get("two_handed"):
+            return len(hands) >= 2
+        return any(p.data.get("primary") for p in hands)
 
     def attacks(self) -> list[tuple[dict, Item | None]]:
         """Every attack available right now: the wielded weapon's plus natural ones."""
