@@ -1,0 +1,2 @@
+{"id": "example_mod", "name": "Example: super soldiers", "dependencies": ["core"],
+ "description": "Shows copy-from/relative/extend inheritance and a new JSON-only power."}

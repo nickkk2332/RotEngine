@@ -1,0 +1,22 @@
+[
+  {"type": "trait", "id": "tough_hide", "name": "impervious hide",
+   "description": "Bullets flatten against skin like hail on a car.",
+   "natural_dr": {"*": 25}},
+  {"type": "trait", "id": "regeneration", "name": "regeneration",
+   "hooks": {"on_second": [{"heal": {"amount": 1, "who": "self"}},
+                           {"stop_bleeding": {"fraction": 0.5, "who": "self"}}]}},
+  {"type": "trait", "id": "rage", "name": "the angrier he gets...",
+   "description": "Every wound makes him stronger, to a point.",
+   "hooks": {"on_damaged": [
+     {"modify_stat": {"stat": "ST", "amount": 1, "max_bonus": 20, "who": "self"}},
+     {"if": {"not": {"has_status": {"id": "enraged", "who": "self"}}},
+      "then": [{"add_status": {"id": "enraged", "who": "self"}},
+               {"message": "{self} ROARS."}]}
+   ]}},
+  {"type": "trait", "id": "high_pain_threshold", "name": "high pain threshold", "knockdown_bonus": 3},
+  {"type": "trait", "id": "combat_reflexes", "name": "combat reflexes", "dodge_bonus": 1, "parry_bonus": 1},
+  {"type": "trait", "id": "gun_fu", "name": "gun fu",
+   "description": "Draws, shoots and moves in one motion.",
+   "action_time_mult": {"ranged": 0.6}, "dodge_bonus": 1},
+  {"type": "trait", "id": "super_speed_minor", "name": "enhanced speed", "speed_bonus": 2}
+]

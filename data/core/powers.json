@@ -1,0 +1,37 @@
+[
+  {"type": "power", "id": "thunderclap", "name": "thunderclap",
+   "description": "Claps hard enough to make a shockwave. Staggers everyone near and tears up the room.",
+   "cost": {"stamina": 3}, "time_ms": 1000,
+   "ai_condition": {"compare": [{"count_enemies": {"radius": 3}}, ">=", 2]},
+   "effects": [
+     {"message": "{self} brings his hands together. BOOM."},
+     {"for_each_enemy": {"radius": 3, "do": [
+       {"damage": {"amount": "4d6", "type": "crush", "location": "torso"}},
+       {"if": {"not": {"roll": {"stat": "CON", "who": "target", "mod": -3}}},
+        "then": [{"add_status": {"id": "stunned", "duration_ms": 2000, "who": "target"}},
+                 {"add_status": {"id": "prone", "who": "target"}}]}
+     ]}},
+     {"damage_terrain": {"radius": 2, "amount": "6d6", "z_offsets": [0, 1]}}
+   ]},
+  {"type": "power", "id": "blink", "name": "blink",
+   "description": "Short-range teleport to a target in sight, arriving behind them with a blade already moving: an all-out attack they never see coming.",
+   "cost": {"stamina": 2}, "time_ms": 400,
+   "ai_condition": {"and": [{"has_target": true}, {"sees_target": true},
+                            {"compare": [{"distance_to_target": {}}, "<=", 14]},
+                            {"or": [{"compare": [{"distance_to_target": {}}, ">=", 3]},
+                                    {"compare": [{"count_enemies": {"radius": 1}}, ">=", 2]}]}]},
+   "effects": [
+     {"teleport": {"range": 14}},
+     {"message": "{self} blinks behind {target}."},
+     {"attack": {"surprise": true, "skill_bonus": 4, "damage_bonus": 2}}
+   ]},
+  {"type": "power", "id": "hulk_leap", "name": "leap",
+   "description": "Clears a room in one bound, straight up onto the mezzanine if need be.",
+   "cost": {"stamina": 1}, "time_ms": 1000,
+   "ai_condition": {"and": [{"has_target": true}, {"sees_target": true},
+                            {"not": {"target_reachable": true}}]},
+   "effects": [
+     {"leap": {"range": 20, "max_rise": 2}},
+     {"message": "{self} leaps and lands next to {target} with a crash."}
+   ]}
+]

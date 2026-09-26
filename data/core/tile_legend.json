@@ -1,0 +1,18 @@
+{
+  "type": "tile_legend", "id": "default",
+  "tiles": {
+    " ": {},
+    ".": {"floor": "concrete"},
+    ",": {"floor": "dirt"},
+    "_": {"floor": "wood"},
+    "~": {"floor": "grate"},
+    "#": {"fill": "concrete", "floor": "concrete"},
+    "B": {"fill": "brick", "floor": "concrete"},
+    "|": {"fill": "drywall", "floor": "concrete"},
+    "O": {"fill": "wood", "floor": "concrete"},
+    "H": {"fill": "steel", "floor": "concrete"},
+    "=": {"fill": "glass", "floor": "concrete"},
+    "X": {"fill": "stairs"},
+    "x": {"fill": "stairs", "floor": "concrete"}
+  }
+}

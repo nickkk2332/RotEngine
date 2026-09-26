@@ -1,0 +1,21 @@
+[
+  {"type": "material", "id": "air", "name": "air", "glyph": " "},
+  {"type": "material", "id": "concrete", "name": "concrete", "glyph": "#", "floor_glyph": ".",
+   "solid": true, "hp": 120, "dr": 20},
+  {"type": "material", "id": "brick", "name": "brick wall", "glyph": "#", "floor_glyph": ".",
+   "solid": true, "hp": 60, "dr": 10},
+  {"type": "material", "id": "drywall", "name": "drywall", "glyph": "|", "floor_glyph": ".",
+   "solid": true, "hp": 8, "dr": 1},
+  {"type": "material", "id": "wood", "name": "wood", "glyph": "O", "floor_glyph": "_",
+   "solid": true, "hp": 25, "dr": 3},
+  {"type": "material", "id": "steel", "name": "steel", "glyph": "H", "floor_glyph": ":",
+   "solid": true, "hp": 200, "dr": 40},
+  {"type": "material", "id": "grate", "name": "metal grating", "glyph": "#", "floor_glyph": "~",
+   "solid": true, "transparent": true, "hp": 30, "dr": 6},
+  {"type": "material", "id": "glass", "name": "window", "glyph": "=", "floor_glyph": "=",
+   "solid": true, "transparent": true, "hp": 2, "dr": 1},
+  {"type": "material", "id": "dirt", "name": "dirt", "glyph": "%", "floor_glyph": ",",
+   "solid": true, "hp": 80, "dr": 8},
+  {"type": "material", "id": "stairs", "name": "stairs", "glyph": "X",
+   "supports": true, "climbable": true, "hp": 40, "dr": 4}
+]

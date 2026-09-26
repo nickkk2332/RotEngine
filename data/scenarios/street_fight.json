@@ -1,0 +1,41 @@
+{
+ "name": "Street fight",
+ "description": "Two average people with knives in a vacant lot. Should be a coin flip that nobody walks away from clean.",
+ "levels": [
+  [
+   ",,,,,,,,,,,,,,,,,,",
+   ",,,,,,,,,,,,,,,,,,",
+   ",,,,,,,,,,,,,,,,,,",
+   ",,,,,,,,,,,,,,,,,,",
+   ",,,,,,,,,,,,,,,,,,",
+   ",,,,,,,,,,,,,,,,,,",
+   ",,,,,,,,,,,,,,,,,,",
+   ",,,,,,,,,,,,,,,,,,",
+   ",,,,,,,,,,,,,,,,,,"
+  ]
+ ],
+ "teams": {
+  "red": [
+   {
+    "creature": "street_tough",
+    "at": [
+     5,
+     4,
+     0
+    ],
+    "name": "Red"
+   }
+  ],
+  "blue": [
+   {
+    "creature": "street_tough",
+    "at": [
+     12,
+     4,
+     0
+    ],
+    "name": "Blue"
+   }
+  ]
+ }
+}

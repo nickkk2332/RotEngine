@@ -1,0 +1,6 @@
+[
+  {"type": "status", "id": "prone", "name": "prone", "attack_mod": -4, "defense_mod": -3, "move_mult": 0.25},
+  {"type": "status", "id": "stunned", "name": "stunned", "prevents_action": true, "defense_mod": -4},
+  {"type": "status", "id": "unconscious", "name": "unconscious", "prevents_action": true},
+  {"type": "status", "id": "enraged", "name": "enraged", "attack_mod": 1, "defense_mod": -1}
+]

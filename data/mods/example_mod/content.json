@@ -1,0 +1,17 @@
+[
+  {"type": "creature", "id": "super_soldier", "copy-from": "soldier", "name": "super soldier", "glyph": "S",
+   "relative": {"stats": {"ST": 6, "CON": 4, "DEX": 3}, "skills": {"guns": 2, "brawling": 4}},
+   "extend": {"traits": ["high_pain_threshold"], "powers": ["adrenal_surge"]}},
+
+  {"type": "power", "id": "adrenal_surge", "name": "adrenal surge",
+   "cost": {"stamina": 4}, "time_ms": 200,
+   "ai_condition": {"and": [{"compare": [{"hp": {"who": "self"}}, "<", 8]},
+                            {"not": {"has_status": {"id": "surging", "who": "self"}}}]},
+   "effects": [
+     {"message": "{self} jams a syringe into his thigh."},
+     {"add_status": {"id": "surging", "duration_ms": 15000, "who": "self"}},
+     {"heal": {"amount": "2d6", "who": "self"}},
+     {"stop_bleeding": {"fraction": 1, "who": "self"}}
+   ]},
+  {"type": "status", "id": "surging", "name": "surging", "attack_mod": 2, "defense_mod": 1}
+]

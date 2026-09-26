@@ -1,0 +1,19 @@
+[project]
+name = "rotengine"
+version = "0.1.0"
+description = "Simulation-first ASCII roguelike combat engine: 3d6 rules, anatomical wounds, destructible voxel world, JSON modding."
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+ui = ["tcod>=16"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rotengine = "rotengine.__main__:main"
+
+[tool.setuptools]
+packages = ["rotengine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
