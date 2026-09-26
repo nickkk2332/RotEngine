@@ -80,6 +80,9 @@ class Content:
     def has(self, type_: str, id_: str) -> bool:
         return id_ in self._raw.get(type_, {})
 
+    def types(self) -> list[str]:
+        return sorted(self._raw)
+
     def ids(self, type_: str) -> list[str]:
         return [i for i, o in self._raw.get(type_, {}).items() if not o.get("abstract")]
 

@@ -68,6 +68,7 @@ class Creature:
         self.death_cause: str | None = None
         self.next_time = 0
         self.target: Creature | None = None
+        self.cooldowns: dict[str, float] = {}  # power id -> world time it's ready again
 
     def __repr__(self) -> str:
         return f"<{self.name}#{self.uid} {self.team} {self.pos}>"
@@ -172,10 +173,12 @@ class Creature:
         """Physical effort (swinging, running). Powers pay their cost directly."""
         self.stamina -= amount * self.trait_product("exertion_mult")
 
-    def action_penalty(self) -> int:
-        """Everything that makes this creature worse at acting right now."""
+    def action_penalty(self, kind: str | None = None) -> int:
+        """Everything that makes this creature worse at acting right now.
+        `kind` ("melee"/"ranged") adds status modifiers specific to it."""
+        mods = self.status_sum("attack_mod") + (self.status_sum(f"{kind}_attack_mod") if kind else 0)
         return (self.shock + self.pain() + self.body.blood_penalty()
-                + (0, 1, 3)[self.fatigue_level()] - int(self.status_sum("attack_mod")))
+                + (0, 1, 3)[self.fatigue_level()] - int(mods))
 
     def defense_penalty(self) -> int:
         return (self.pain() // 2 + self.body.blood_penalty() + (0, 1, 3)[self.fatigue_level()]

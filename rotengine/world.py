@@ -38,6 +38,10 @@ class World:
         self.floor_hp = np.zeros(shape, np.int32)
         self._structural = np.array([bool(m.get("solid") or m.get("supports")) for m in self.mats])
         self._opaque = np.array([bool(m.get("solid") and not m.get("transparent")) for m in self.mats])
+        self._solid = np.array([bool(m.get("solid")) for m in self.mats])
+        self._supports = np.array([bool(m.get("supports")) for m in self.mats])
+        self._climbable = np.array([bool(m.get("climbable")) for m in self.mats])
+        self._nav: tuple[list, list, list] | None = None  # (passable, supported, climbable) as nested lists
 
     # -- editing -----------------------------------------------------------
     def set_fill(self, pos: Pos, mat: str) -> None:
@@ -45,12 +49,14 @@ class World:
         i = self.mat_index[mat]
         self.fill[z, y, x] = i
         self.fill_hp[z, y, x] = self.mats[i].get("hp", 0)
+        self._nav = None
 
     def set_floor(self, pos: Pos, mat: str | None) -> None:
         x, y, z = pos
         i = self.mat_index[mat] if mat else AIR
         self.floor[z, y, x] = i
         self.floor_hp[z, y, x] = self.mats[i].get("hp", 0)
+        self._nav = None
 
     # -- queries -----------------------------------------------------------
     def in_bounds(self, pos: Pos) -> bool:
@@ -66,31 +72,46 @@ class World:
         i = self.floor[z, y, x]
         return self.mats[i] if i else None
 
+    def _navigation(self) -> tuple[list, list, list]:
+        """Movement lookups as plain nested lists: pathfinding asks millions of
+        these questions, and numpy scalar indexing is slow for that. Rebuilt
+        lazily after any terrain change."""
+        if self._nav is None:
+            passable = ~self._solid[self.fill]
+            supported = (self.floor != AIR) | self._supports[self.fill]
+            self._nav = (passable.tolist(), supported.tolist(), self._climbable[self.fill].tolist())
+        return self._nav
+
     def passable(self, pos: Pos) -> bool:
-        return self.in_bounds(pos) and not self.fill_mat(pos).get("solid")
+        x, y, z = pos
+        return (0 <= x < self.width and 0 <= y < self.height and 0 <= z < self.depth
+                and self._navigation()[0][z][y][x])
 
     def supported(self, pos: Pos) -> bool:
         x, y, z = pos
-        return bool(self.floor[z, y, x]) or bool(self.fill_mat(pos).get("supports"))
+        return self._navigation()[1][z][y][x]
 
     def standable(self, pos: Pos) -> bool:
-        return self.passable(pos) and self.supported(pos)
+        return self.passable(pos) and self._navigation()[1][pos[2]][pos[1]][pos[0]]
 
     def neighbors(self, pos: Pos) -> Iterator[Pos]:
         """Walkable moves from pos: 8 horizontal plus climbing stairs."""
         x, y, z = pos
+        passable, supported, climbable = self._navigation()
+        w, h = self.width, self.height
+        pz, sz = passable[z], supported[z]
         for dx, dy in DIRS8:
-            q = (x + dx, y + dy, z)
-            if not self.standable(q):
+            nx, ny = x + dx, y + dy
+            if not (0 <= nx < w and 0 <= ny < h and pz[ny][nx] and sz[ny][nx]):
                 continue
-            if dx and dy and not (self.passable((x + dx, y, z)) or self.passable((x, y + dy, z))):
+            if dx and dy and not (pz[y][nx] or pz[ny][x]):
                 continue  # no squeezing diagonally between two walls
-            yield q
-        if self.fill_mat(pos).get("climbable"):
+            yield (nx, ny, z)
+        if climbable[z][y][x]:
             for dz in (1, -1):
-                q = (x, y, z + dz)
-                if self.in_bounds(q) and self.passable(q) and self.fill_mat(q).get("climbable"):
-                    yield q
+                nz = z + dz
+                if 0 <= nz < self.depth and passable[nz][y][x] and climbable[nz][y][x]:
+                    yield (x, y, nz)
 
     # -- lines, sight and projectiles --------------------------------------
     @staticmethod
@@ -101,7 +122,7 @@ class World:
         return [tuple(int(math.floor(a[i] + d[i] * s / n + 0.5)) for i in range(3))
                 for s in range(1, n + 1)]
 
-    def _crossing(self, p: Pos, q: Pos) -> Pos | None:
+    def crossing(self, p: Pos, q: Pos) -> Pos | None:
         """The floor slab crossed moving p -> q, if the move changes z."""
         if q[2] > p[2]:
             return q
@@ -115,7 +136,7 @@ class World:
         found: list[tuple[str, Pos]] = []
         prev = a
         for p in self.line(a, b):
-            slab = self._crossing(prev, p)
+            slab = self.crossing(prev, p)
             if slab is not None:
                 fm = self.floor_mat(slab)
                 if fm is not None:

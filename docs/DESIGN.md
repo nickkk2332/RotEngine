@@ -90,7 +90,8 @@ hypoxia, fainting and waking, stamina recovery, statuses running out, `on_second
 + cover (−1 per blocked corner of the target's tile, −4 when mostly hidden)
 + hit location (vitals −3, face/neck −5, skull −7)
 − 2 per level of deceptive attack
-− shock − pain − blood loss − fatigue − status modifiers (prone −4).
+− shock − pain − blood loss − fatigue − status modifiers (prone: −4 in melee, and
+shooting at a prone target is −2).
 
 **Hit:** if the roll succeeds. Rapid fire gives one extra hit per `recoil` points of margin.
 
@@ -265,8 +266,8 @@ An effect list is a list of single-op objects:
 | `damage_terrain {radius, amount, z_offsets}`, `set_var` | | |
 
 **Hooks** on traits and statuses: `on_damaged` (var `damage`), `on_second`, `on_kill`.
-**Powers** have `cost.stamina`, `time_ms`, `effects`, and an `ai_condition` that NPCs use
-to decide when to fire them. Modded powers get used sensibly without new AI code.
+**Powers** have `cost.stamina`, `time_ms`, optional `cooldown_ms`, `effects`, and an
+`ai_condition` that NPCs use to decide when to fire them. Modded powers get used sensibly without new AI code.
 
 **Python plugins** extend the language:
 ```python
@@ -316,4 +317,8 @@ PyO3) behind the same API.
 **Trait and status fields the engine reads:** `natural_dr`, `stat_mods`, `speed_bonus`,
 `dodge_bonus`, `parry_bonus`, `move_mult`, `tempo`, `momentum_exponent`,
 `action_time_mult`, `exertion_mult`, `pain_mult`, `pain_resist`, `knockdown_bonus`,
-`hooks`. Statuses also: `prevents_action`, `attack_mod`, `defense_mod`, `subjective`.
+`hooks`. Statuses also: `prevents_action`, `attack_mod`, `melee_attack_mod`,
+`ranged_attack_mod`, `ranged_target_mod`, `defense_mod`, `move_mult`, `subjective`.
+Timed statuses expire at their exact time, not on the next world tick. Powers also
+take `cooldown_ms`. A power whose effects abort (nowhere to land, out of range)
+"fizzles" and can't be retried for 2 s.

@@ -25,13 +25,13 @@ FIRST_AID_MS = 5000
 
 
 def take_turn(sim: "Sim", c: "Creature") -> int:
-    if c.has_status("prone"):
+    enemies = sim.enemies_of(c)
+    visible = [e for e in enemies if sim.world.has_los(c.pos, e.pos)]
+    if c.has_status("prone") and not _good_firing_position(sim, c, enemies, visible):
         if c.body.functional_with("stance") or not c.body.total_with("stance"):
             del c.statuses["prone"]
             sim.log(f"{c.name} gets back up.")
             return 1000
-    enemies = sim.enemies_of(c)
-    visible = [e for e in enemies if sim.world.has_los(c.pos, e.pos)]
     if not visible:
         aid = _first_aid(sim, c, allies=not enemies)
         if aid is not None:
@@ -46,6 +46,8 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
 
     for power in c.powers:
         if c.stamina < power.get("cost", {}).get("stamina", 0):
+            continue
+        if c.cooldowns.get(power["id"], 0) > sim.time:
             continue
         ctx = effects.Ctx(sim, c, target)
         if effects.test(power.get("ai_condition", False), ctx):
@@ -79,6 +81,14 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
     if step is None:
         return 500
     return _move(sim, c, step)
+
+
+def _good_firing_position(sim: "Sim", c: "Creature", enemies: list["Creature"],
+                          visible: list["Creature"]) -> bool:
+    """Lying flat is a fine place to shoot from (and a smaller target), as
+    long as nobody is close enough to stomp on you."""
+    return (bool(visible) and _has_usable_ranged(c)
+            and all(sim.distance(c, e) > 3 for e in enemies))
 
 
 def _move(sim: "Sim", c: "Creature", step: "Pos") -> int:

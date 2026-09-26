@@ -18,11 +18,21 @@ from .sim import Sim
 from .world import World
 
 
+class ScenarioError(Exception):
+    pass
+
+
 def load_scenario(path: str | Path) -> dict:
     p = Path(path)
     if not p.exists():
         p = DATA_DIR / "scenarios" / (str(path) + ("" if str(path).endswith(".json") else ".json"))
-    scenario = json.loads(p.read_text())
+    if not p.exists():
+        known = ", ".join(sorted(q.stem for q in (DATA_DIR / "scenarios").glob("*.json")))
+        raise ScenarioError(f"no scenario '{path}'. Known scenarios: {known}")
+    try:
+        scenario = json.loads(p.read_text())
+    except json.JSONDecodeError as e:
+        raise ScenarioError(f"{p}: invalid JSON: {e}") from e
     scenario.setdefault("id", p.stem)
     return scenario
 
@@ -87,8 +97,11 @@ class Outcome:
 
 
 def run_once(scenario: dict, content: Content, seed: int | None = None,
-             echo: Callable[[str], None] | None = None, show_map: bool = False) -> Outcome:
-    sim = build(scenario, content, seed, echo)
+             echo: Callable[[str], None] | None = None, show_map: bool = False,
+             aftermath: float | None = None, play_by_play: bool = True) -> Outcome:
+    """Run one fight. `echo` receives the report (and the blow-by-blow log
+    unless play_by_play is False); `aftermath` overrides the scenario's."""
+    sim = build(scenario, content, seed, echo if play_by_play else None)
     if show_map and echo:
         echo(render_all(sim))
     winner = sim.run(scenario.get("time_limit_s", 180) * 1000)
@@ -97,10 +110,11 @@ def run_once(scenario: dict, content: Content, seed: int | None = None,
         if show_map:
             echo(render_all(sim))
         echo(f"\n=== {'Winner: ' + winner if winner else 'No winner'} after {fight_s:.1f}s ===")
-    aftermath = scenario.get("aftermath_s", 120)
+    if aftermath is None:
+        aftermath = scenario.get("aftermath_s", 120)
     if aftermath:
         if echo:
-            echo(f"--- aftermath: {aftermath}s later ---")
+            echo(f"--- aftermath: {aftermath:g}s later ---")
         sim.run_aftermath(aftermath)
     if echo:
         for c in sim.creatures:

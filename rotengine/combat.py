@@ -122,6 +122,7 @@ def defense_against(sim: "Sim", attacker: "Creature", target: "Creature", kind: 
     """The target's defense roll target, or None if it can't defend at all."""
     if surprise or not target.conscious:
         return None
+    sim.expire_statuses(target)
     side = arc(target, attacker.pos)
     ratio = target.tempo / attacker.tempo
     if side == "rear" and ratio >= 4:
@@ -164,7 +165,8 @@ class AttackPlan:
 def base_skill(sim: "Sim", attacker: "Creature", target: "Creature", attack: dict,
                item: "Item | None") -> int | None:
     """Effective skill before hit location / deception, or None if impossible."""
-    skill = attacker.skill(attack["skill"]) + attack.get("skill_mod", 0) - attacker.action_penalty()
+    skill = (attacker.skill(attack["skill"]) + attack.get("skill_mod", 0)
+             - attacker.action_penalty(attack["kind"]))
     if attack["kind"] == "melee":
         if not sim.in_melee_reach(attacker.pos, target.pos, attack.get("reach", 1)):
             return None
@@ -176,6 +178,7 @@ def base_skill(sim: "Sim", attacker: "Creature", target: "Creature", attack: dic
         return None
     if attacker.aim_target == target.uid:
         skill += attack.get("acc", 0)
+    skill += int(target.status_sum("ranged_target_mod"))  # e.g. lying flat
     return skill + range_penalty(dist) + cover(sim, attacker.pos, target)[0]
 
 
@@ -189,7 +192,7 @@ def friendly_in_line(sim: "Sim", shooter: "Creature", target: "Creature") -> boo
 
 def best_attack_plan(sim: "Sim", attacker: "Creature", target: "Creature",
                      surprise: bool = False, skill_bonus: int = 0,
-                     damage_bonus: int = 0) -> AttackPlan | None:
+                     damage_bonus: int = 0, allow_aim: bool = True) -> AttackPlan | None:
     best: AttackPlan | None = None
     body = target.body
     cap = max(1.0, target.hp + target.max_hp)  # overkill is worthless
@@ -223,7 +226,7 @@ def best_attack_plan(sim: "Sim", attacker: "Creature", target: "Creature",
         speed_mult = attacker.trait_product("action_time_mult", attack["kind"])
         shot_ms = attack.get("time_ms", 1000) * speed_mult
         variants = [(skill0, shot_ms, False)]
-        if ranged and attack.get("acc", 0) and attacker.aim_target != target.uid:
+        if allow_aim and ranged and attack.get("acc", 0) and attacker.aim_target != target.uid:
             variants.append((skill0 + attack["acc"], shot_ms + AIM_MS * speed_mult, True))
         for skill_v, ms, aim in variants:
             for loc, penalty, exp in options:
@@ -348,11 +351,23 @@ def _stray_rounds(sim: "Sim", shooter: "Creature", target: "Creature", dice: Dic
     tx, ty, tz = target.pos
     far = (tx + (tx - sx) * 4, ty + (ty - sy) * 4, tz + (tz - sz) * 4)
     path = sim.world.line(shooter.pos, far)
+    world = sim.world
     for _ in range(rounds):
         dmg = dice.roll(sim.rng)
+        prev = shooter.pos
         for p in path:
-            if not sim.world.in_bounds(p) or dmg <= 0:
+            if not world.in_bounds(p) or dmg <= 0:
                 break
+            slab = world.crossing(prev, p)
+            prev = p
+            if slab is not None and world.floor_mat(slab) is not None:
+                fmat = world.floor_mat(slab)
+                if world.damage_floor(slab, dmg):
+                    sim.log(f"  A stray round punches through the {fmat['name']} floor.")
+                    sim.terrain_changed()
+                dmg -= fmat.get("dr", 0)
+                if dmg <= 0 or world.floor_mat(slab) is not None:
+                    break
             if p != target.pos:
                 other = sim.creature_at(p, include_down=True)
                 if other is not None and other is not shooter and check(sim.rng, BYSTANDER_HIT).success:
@@ -532,11 +547,21 @@ def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int) -> None
     sim.check_fall(target)
 
 
+FIZZLE_COOLDOWN_MS = 2000
+
+
 def use_power(sim: "Sim", c: "Creature", power: dict, target: "Creature | None") -> int:
+    """Pay, run the effects, start the cooldown. A power whose effects abort
+    (no room to land, target out of range) fizzles and can't be retried for a
+    couple of seconds, so the AI doesn't burn itself out retrying."""
     c.stamina -= power.get("cost", {}).get("stamina", 0)
     sim.log(f"{c.name} uses {power['name']}!")
     ctx = effects.Ctx(sim, c, target)
     effects.run(power["effects"], ctx)
+    cooldown = power.get("cooldown_ms", 0)
     if ctx.vars.get("_abort"):
         sim.log(f"  ...but the {power['name']} fizzles.")
+        cooldown = max(cooldown, FIZZLE_COOLDOWN_MS)
+    if cooldown:
+        c.cooldowns[power["id"]] = sim.time + cooldown / c.tempo
     return int(power.get("time_ms", 1000))

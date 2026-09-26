@@ -1,5 +1,7 @@
 [
-  {"type": "status", "id": "prone", "name": "prone", "attack_mod": -4, "defense_mod": -3, "move_mult": 0.25},
+  {"type": "status", "id": "prone", "name": "prone",
+   "description": "Lying down: awful for melee, fine for shooting, and a smaller target at range.",
+   "melee_attack_mod": -4, "defense_mod": -3, "ranged_target_mod": -2, "move_mult": 0.25},
   {"type": "status", "id": "stunned", "name": "stunned", "subjective": true,
    "prevents_action": true, "defense_mod": -4},
   {"type": "status", "id": "agony", "name": "in agony", "subjective": true,

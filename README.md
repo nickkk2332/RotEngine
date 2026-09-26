@@ -14,7 +14,9 @@ the rules, and the roadmap to a playable game.
 ```bash
 pip install -e ".[dev]"          # numpy + pytest; add [ui] later for python-tcod
 python -m rotengine list          # scenarios
-python -m rotengine arena hulk_vs_squad --seed 3 --map    # watch one fight (+120s aftermath)
+python -m rotengine arena hulk_vs_squad --map            # watch one fight (+120s aftermath);
+                                                          # prints its seed, replay with --seed N
+python -m rotengine arena speedster_vs_squad --summary    # just the outcome and injuries
 python -m rotengine arena wick_vs_thugs --runs 200       # balance statistics
 python -m rotengine validate --mod example_mod           # check content + mods
 python -m pytest
@@ -43,6 +45,10 @@ python -m pytest
 | John Wick (guns 20) vs 8 armed thugs | Wick wins ~82%; most thugs die of blood loss after the fight |
 | Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~62%; loses to simultaneous bursts |
 | Blink assassin vs 6 guards, 2 with pistols | Assassin wins ~6%, usually after several kills. Deliberately hard; needs stealth |
+
+Map glyphs: creatures by their template glyph, `&` someone down (unconscious), `%` a
+corpse, dropped weapons by their item glyph. Terrain: `#` concrete/brick, `|` drywall,
+`=` glass, `O` wooden pillar, `X` stairs, `.`/`_`/`,` floors, blank = open air.
 
 ## Layout
 

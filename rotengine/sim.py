@@ -72,6 +72,13 @@ class Sim:
             duration_ms /= c.tempo
         c.add_status(status_id, self.time + duration_ms)
 
+    def expire_statuses(self, c: Creature) -> None:
+        """Drop timed statuses that have run out. Called whenever a creature
+        acts or defends, so a 250 ms stun really is 250 ms."""
+        for sid, until in list(c.statuses.items()):
+            if until is not None and until <= self.time:
+                del c.statuses[sid]
+
     def drop(self, pos: Pos, item: Item) -> None:
         self.items.append((pos, item))
 
@@ -223,8 +230,13 @@ class Sim:
                 self._settle()
 
     def _act(self, c: Creature) -> int:
+        self.expire_statuses(c)
         if not c.can_act:
-            return 250
+            ends = [t for sid, t in c.statuses.items()
+                    if t is not None and self.content.get("status", sid).get("prevents_action")]
+            if ends and c.conscious:
+                return max(1, int((min(ends) - self.time) * c.tempo))
+            return 1000  # out cold: waking is decided on the world tick
         if c.hp <= 0:
             below = int(-c.hp // c.max_hp)
             if not check(self.rng, c.stat("CON") - below).success:
@@ -243,9 +255,7 @@ class Sim:
         for c in self.creatures:
             if c.dead:
                 continue
-            for sid, until in list(c.statuses.items()):
-                if until is not None and until <= self.time:
-                    del c.statuses[sid]
+            self.expire_statuses(c)
             self._blood(c, second)
             if c.dead:
                 continue

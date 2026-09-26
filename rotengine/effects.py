@@ -409,7 +409,7 @@ def _e_attack(args, ctx):
         return
     plan = best_attack_plan(ctx.sim, ctx.self, ctx.target, surprise=args.get("surprise", False),
                             skill_bonus=args.get("skill_bonus", 0),
-                            damage_bonus=args.get("damage_bonus", 0))
+                            damage_bonus=args.get("damage_bonus", 0), allow_aim=False)
     if plan:
         resolve_attack(ctx.sim, ctx.self, ctx.target, plan, surprise=args.get("surprise", False))
 
