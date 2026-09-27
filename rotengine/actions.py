@@ -7,11 +7,12 @@ the player and the AI play by exactly the same rules.
 """
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING
 
 from . import combat, perception, physics
 from .dice import check
+from .grapple import (  # noqa: F401  (grappling verbs live in grapple.py)
+    check_grapple, choke, disarm, grab, hurl, release, squeeze, strangle, struggle, takedown, wrench, wrest)
 
 if TYPE_CHECKING:
     from .combat import AttackPlan
@@ -25,13 +26,6 @@ STAND_MS = 1000
 GO_PRONE_MS = 500
 PICKUP_MS = 1000
 SWAP_MS = 1000
-GRAB_MS = 1000
-CHOKE_MS = 1000
-WRENCH_MS = 1000
-TAKEDOWN_MS = 1000
-DISARM_MS = 1000
-CHOKE_HYPOXIA = 3.0          # brain damage per second of choking someone already out
-KNOCKOUT_MS = (20_000, 60_000)  # how long a choke keeps someone under
 DOOR_MS = 500
 THROW_MS = 1000
 PLANT_MS = 3000
@@ -255,16 +249,6 @@ def throw(sim: "Sim", c: "Creature", item, target: "Pos") -> int | None:
     return THROW_MS
 
 
-def hurl(sim: "Sim", c: "Creature", direction: tuple[int, int]) -> int | None:
-    """Throw the person you're holding."""
-    body = c.grappling
-    if body is None or direction == (0, 0):
-        return None
-    physics.fling(sim, c, body, direction)
-    c.exert(0.5)
-    return THROW_MS
-
-
 def plant(sim: "Sim", c: "Creature", item, pos: "Pos") -> int | None:
     """Fix a charge to a wall or door next to you; it blows a few seconds later."""
     if item not in c.carried or not item.data.get("plantable") or not sim.in_melee_reach(c.pos, pos):
@@ -299,237 +283,6 @@ def swap_weapon(sim: "Sim", c: "Creature") -> int | None:
 
 
 # -- grappling ---------------------------------------------------------------
-def grab(sim: "Sim", c: "Creature", target: "Creature") -> int | None:
-    """Get hold of someone next to you. From behind, or on someone who never
-    saw you coming, there's no defending against it."""
-    if (c.grappling is not None or target is c or not c.body.functional_with("grasp")
-            or not sim.in_melee_reach(c.pos, target.pos) or c.pos[2] != target.pos[2]
-            or target.grappled_by is not None):
-        return None
-    combat.face(c, target.pos)
-    if not target.conscious:  # a body: just take hold of it (to drag it somewhere dark)
-        with sim.focus(c.pos, target.pos):
-            sim.log(f"{c.name} takes hold of {target.name}'s {'body' if target.dead else 'limp form'}.")
-        c.grappling, target.grappled_by = target, c
-        c.add_status("grappling", None)
-        target.add_status("grappled", None)
-        return GRAB_MS
-    c.exert(0.3)
-    defense = combat.defense_against(sim, c, target, "melee")
-    roll = check(sim.rng, c.skill("wrestling") - c.action_penalty("melee"))
-    perception.emit_noise(sim, c, c.pos, "struggle")
-    with sim.focus(c.pos, target.pos):
-        if not roll.success:
-            sim.log(f"{c.name} lunges for {target.name} and misses.")
-            perception.notice_attacker(sim, target, c)
-            return GRAB_MS
-        if defense is not None:
-            combat.spend_defense(sim, target)
-            if check(sim.rng, defense[1]).success:
-                sim.log(f"{c.name} grabs at {target.name}, who twists away.")
-                perception.notice_attacker(sim, target, c)
-                return GRAB_MS
-        how = "" if defense is not None else (" from behind" if target.conscious else "")
-        sim.log(f"{c.name} gets {target.name} in a hold{how}.")
-    c.grappling, target.grappled_by = target, c
-    c.rear_hold = defense is None  # taken from behind: much harder to get out of
-    c.add_status("grappling", None)
-    target.add_status("grappled", None)
-    perception.notice_attacker(sim, target, c)  # they know now, but the hold keeps them quiet
-    return GRAB_MS
-
-
-def choke(sim: "Sim", c: "Creature") -> int | None:
-    """Squeeze. The one being choked can't cry out; each second they roll
-    CON (worse every second) or go limp for half a minute or so. Keep
-    squeezing after that and you're killing them."""
-    t = c.grappling
-    if t is None or t.dead:
-        return None
-    t.choked += 1
-    perception.emit_noise(sim, c, c.pos, "sneak")
-    with sim.focus(c.pos, t.pos):
-        if t.conscious:
-            if not check(sim.rng, t.stat("CON") - 2 * t.choked + 2).success:
-                sim.log(f"{t.name} goes limp in {c.name}'s chokehold.")
-                t.statuses.pop("prone", None)
-                t.add_status("unconscious", sim.time + sim.rng.randint(*KNOCKOUT_MS))
-                t.add_status("prone", None)
-            else:
-                sim.log(f"{c.name} tightens the chokehold on {t.name}.")
-        else:
-            t.body.hypoxia += CHOKE_HYPOXIA
-            if t.body.hypoxia >= 100:
-                combat.kill(sim, t, "strangled")
-                release(sim, c)
-            elif t.choked % 5 == 0:
-                sim.log(f"{c.name} keeps squeezing {t.name}'s throat...")
-    return CHOKE_MS
-
-
-def _hold_contest(sim: "Sim", c: "Creature", t: "Creature", resist: int | None = None) -> bool:
-    """Doing something to someone you hold: your ST or Wrestling (+2 for the
-    leverage, +3 more from behind) against their ST or Wrestling. Someone out
-    cold doesn't resist."""
-    if not t.conscious:
-        return True
-    mine = check(sim.rng, max(c.stat("ST"), c.skill("wrestling")) + 2 + (3 if c.rear_hold else 0)
-                 - c.action_penalty("melee"))
-    base = resist if resist is not None else max(t.stat("ST"), t.skill("wrestling"))
-    theirs = check(sim.rng, base - t.action_penalty("melee") - t.choked)
-    return mine.success and (not theirs.success or mine.margin > theirs.margin)
-
-
-def wrenchable(t: "Creature") -> list:
-    """Parts of t that can be twisted, bent the wrong way or torn off."""
-    return [p for p in t.body.parts.values()
-            if not p.destroyed and "wrench" in p.data.get("by_type", {})]
-
-
-def wrench_dice(c: "Creature"):
-    """Swing damage from ST (with a speedster's momentum), plus technique:
-    +1 per 2 points of Wrestling above 12."""
-    bonus = max(0, (c.skill("wrestling") - 12) // 2)
-    return combat.attack_dice(c, {"damage": {"st": "swing", "add": bonus}})
-
-
-def wrench_odds(c: "Creature", t: "Creature", part) -> tuple[float, int | None, float]:
-    """(average injury per successful wrench, wrenches left to break it or
-    None, chance a single wrench tears it off)."""
-    dtype = c.content.get("damage_type", "wrench")
-    spec = t.body.spec(part, "wrench")
-    dr, mult, mh = t.dr(part.id, "wrench"), t.body.wound_multiplier(part, dtype), t.max_hp
-    avg = p_tear = 0.0
-    for raw, p in wrench_dice(c).distribution().items():
-        pen = raw - dr
-        injury = max(1, math.floor(pen * mult)) if pen > 0 else 0
-        avg += injury * p
-        if spec.get("destroy_at") is not None and injury >= mh * spec["destroy_at"]:
-            p_tear += p
-    tries = None
-    if spec.get("fracture_at") is not None and not part.fractured and avg > 0:
-        tries = max(1, math.ceil((mh * spec["fracture_at"] - part.damage) / avg))
-    return avg, tries, p_tear
-
-
-def wrench(sim: "Sim", c: "Creature", part_id: str) -> int | None:
-    """Joint lock, limb break, neck snap. Armor doesn't help; the joint's own
-    strength (its wrench DR) and natural toughness do. A normal person breaks
-    an arm in a couple of goes and needs several to snap a neck. Someone
-    strong enough to do the part's whole destroy threshold in one pull
-    tears it off, and ends up holding it."""
-    t = c.grappling
-    if t is None:
-        return None
-    part = t.body.parts.get(part_id)
-    if part is None or part not in wrenchable(t):
-        return None
-    combat.face(c, t.pos)
-    c.exert(0.4)
-    perception.emit_noise(sim, c, c.pos, "struggle")
-    spec = t.body.spec(part, "wrench")
-    was_dead = t.dead
-    with sim.focus(c.pos, t.pos):
-        if not _hold_contest(sim, c, t):
-            sim.log(f"{c.name} goes for {t.name}'s {part.name}, but {t.name} fights it.")
-            return WRENCH_MS
-        verb = spec.get("verb", "wrenches {target}'s {part}").format(target=t.name, part=part.name)
-        sim.log(f"{c.name} {verb}.")
-        inj = combat.deal_damage(sim, t, wrench_dice(c).roll(sim.rng), "wrench", part_id,
-                                 source=c, knockback_ok=False)
-        if was_dead and inj.newly_destroyed:
-            sim.log(f"  {inj.spec.get('destroy_text', 'torn off').capitalize()}.")
-        item = inj.severed
-        if item is not None and c.wielded is None and c.can_grip(item):
-            sim.items[:] = [(p, i) for p, i in sim.items if i is not item]
-            c.wielded = item
-            sim.log(f"{c.name} is left holding {item.name}.")
-    return WRENCH_MS
-
-
-def takedown(sim: "Sim", c: "Creature") -> int | None:
-    """Throw the person you hold to the ground and keep hold. Pinned under
-    you, they struggle at -2."""
-    t = c.grappling
-    if t is None or not t.conscious or t.has_status("prone"):
-        return None
-    c.exert(0.4)
-    perception.emit_noise(sim, c, c.pos, "struggle")
-    with sim.focus(c.pos, t.pos):
-        if not _hold_contest(sim, c, t):
-            sim.log(f"{c.name} tries to throw {t.name} down, but {t.name} keeps their feet.")
-            return TAKEDOWN_MS
-        sim.log(f"{c.name} slams {t.name} into the ground.")
-        t.add_status("prone", None)
-        dice = combat.attack_dice(c, {"damage": {"st": "thrust", "add": 0}})
-        combat.deal_damage(sim, t, dice.roll(sim.rng), "crush", "torso", source=c, knockback_ok=False)
-    perception.emit_noise(sim, None, t.pos, "thud")
-    return TAKEDOWN_MS
-
-
-def disarm(sim: "Sim", c: "Creature") -> int | None:
-    """Twist the weapon out of the hands of the person you hold. They resist
-    with ST or their skill with it."""
-    t = c.grappling
-    w = t.wielded if t is not None else None
-    if w is None:
-        return None
-    skill = max((t.skill(a["skill"]) for a in w.attacks), default=0)
-    c.exert(0.3)
-    with sim.focus(c.pos, t.pos):
-        if not _hold_contest(sim, c, t, resist=max(t.stat("ST"), skill)):
-            sim.log(f"{t.name} hangs on to {w.the}.")
-            return DISARM_MS
-        t.wielded = None
-        sim.drop(t.pos, w)
-        sim.log(f"{c.name} twists {w.the} out of {t.name}'s hands.")
-    return DISARM_MS
-
-
-def release(sim: "Sim", c: "Creature") -> int | None:
-    t = c.grappling
-    if t is None:
-        return None
-    c.grappling = None
-    c.statuses.pop("grappling", None)
-    if t.grappled_by is c:
-        t.grappled_by = None
-        t.statuses.pop("grappled", None)
-    t.choked = 0
-    return 200
-
-
-def struggle(sim: "Sim", c: "Creature") -> int | None:
-    """Try to break a hold: your ST against theirs (they have the leverage).
-    Held from behind is -3; every second of choking saps you another -1."""
-    g = c.grappled_by
-    if g is None:
-        return None
-    pinned = c.has_status("prone") and not g.has_status("prone")
-    penalty = (c.action_penalty("melee") + (3 if getattr(g, "rear_hold", False) else 0) + c.choked
-               + (2 if pinned else 0))
-    mine = check(sim.rng, max(c.stat("ST"), c.skill("wrestling")) - penalty)
-    theirs = check(sim.rng, max(g.stat("ST"), g.skill("wrestling")) + 2)
-    perception.emit_noise(sim, c, c.pos, "struggle")
-    with sim.focus(c.pos, g.pos):
-        if mine.success and (not theirs.success or mine.margin > theirs.margin):
-            sim.log(f"{c.name} breaks free of {g.name}!")
-            release(sim, g)
-        else:
-            sim.log(f"{c.name} struggles in {g.name}'s grip.")
-    return 1000
-
-
-def check_grapple(sim: "Sim", c: "Creature") -> None:
-    """Holds break when the two get separated or the holder can't hold on."""
-    for holder, held in ((c, c.grappling), (c.grappled_by, c)):
-        if holder is None or held is None:
-            continue
-        if (holder.dead or not holder.conscious
-                or not sim.in_melee_reach(holder.pos, held.pos) or not holder.body.functional_with("grasp")):
-            release(sim, holder)
-
-
 def power_blocked(sim: "Sim", c: "Creature", power: dict) -> str | None:
     """Why a power can't be used right now, or None if it can."""
     if c.stamina < power.get("cost", {}).get("stamina", 0):

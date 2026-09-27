@@ -9,5 +9,8 @@
   {"type": "damage_type", "id": "burn", "name": "burning", "wound_mult": 1.0, "bleed": 0.0},
   {"type": "damage_type", "id": "wrench", "name": "wrenching", "wound_mult": 1.0, "bleed": 0.05,
    "fractures": true, "dismembers": true, "sudden": true, "ignores_armor": true,
-   "//": "Joint locks and tearing, from a hold. 'sudden': a part only comes off in one pull big enough to do it (cranking a human arm breaks it, it doesn't remove it). 'ignores_armor': worn armor doesn't help; natural toughness does."}
+   "//": "Joint locks and tearing, from a hold (grapple.py). 'sudden': a part only comes off in one pull big enough to do it (cranking a human arm breaks it, it doesn't remove it). 'ignores_armor': worn armor doesn't help; natural toughness does."},
+  {"type": "damage_type", "id": "squeeze", "name": "crushing grip", "wound_mult": 1.0, "bleed": 0.0,
+   "fractures": true, "ignores_armor": true,
+   "//": "Crushing what you hold: bear hugs, crushed hands, a throttled throat. Breaks things, never tears them off."}
 ]

@@ -98,6 +98,7 @@ class Creature:
         self.grappled_by: Creature | None = None
         self.choked = 0                   # seconds spent in a chokehold
         self.rear_hold = False            # (as the holder) took them from behind
+        self.hold: str | None = None      # (as the holder) the part id held, or "weapon"
 
     def __repr__(self) -> str:
         return f"<{self.name}#{self.uid} {self.team} {self.pos}>"
@@ -278,11 +279,15 @@ class Creature:
 
     def attacks(self) -> list[tuple[dict, Item | None]]:
         """Every attack available right now: the wielded weapon's plus natural ones."""
+        from .grapple import WEAPON, restrained
+        held = restrained(self)  # someone has hold of your gun arm: no shooting with it
         out: list[tuple[dict, Item | None]] = []
-        if self.wielded:
+        if self.wielded and WEAPON not in held and not any(
+                p.id in held and (p.data.get("primary") or self.wielded.data.get("two_handed"))
+                for p in self.body.parts.values() if "grasp" in p.tags):
             out += [(a, self.wielded) for a in self.wielded.attacks]
-        grasping = len(self.body.functional_with("grasp"))
-        kicking = len(self.body.functional_with("stance"))
+        grasping = len([p for p in self.body.functional_with("grasp") if p.id not in held])
+        kicking = len([p for p in self.body.functional_with("stance") if p.id not in held])
         for a in self.natural_attacks:
             needs = a.get("uses")
             if needs == "grasp" and not grasping or needs == "stance" and not kicking:

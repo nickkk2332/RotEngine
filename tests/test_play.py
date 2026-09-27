@@ -206,6 +206,14 @@ def test_stealth_controls():
     screen_text(app)
 
 
+def _grab_by(app, g, what):
+    """G, then the letter for that grip in the grab menu."""
+    app.handle_key("G")
+    assert g.mode == "grab"
+    options = [o[0] for o in g._grab_options()]
+    app.handle_key(chr(ord("a") + options.index(what)))
+
+
 def test_chokehold_from_the_ui():
     from rotengine.ui.game import GameScreen
     scenario = {"id": "yard", "name": "Yard", "start_alert": False, "ambient_light": 0.08,
@@ -219,12 +227,19 @@ def test_chokehold_from_the_ui():
     sim = arena.build(scenario, content, seed=2)
     app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 2)
     p, guard = g.player, sim.creatures[1]
-    for _ in range(30):  # G grabs; G again chokes; if he wriggles free, G grabs him again
+    for _ in range(30):  # grab the neck; G chokes; if he wriggles free, grab him again
         if not guard.conscious:
             break
-        app.handle_key("G")
+        if p.grappling is None:
+            if g.mode != "play":
+                app.handle_key("esc")
+            _grab_by(app, g, "neck")
+        else:
+            assert g.mode == "grapple" and "Holding sentry by the neck" in screen_text(app)
+            app.handle_key("G")
     assert not guard.conscious and not guard.dead
-    assert p.grappling is guard and "holding sentry" in screen_text(app)
+    app.handle_key("esc")
+    assert p.grappling is guard and "holding sentry's neck" in screen_text(app)
     app.handle_key("L")
     assert p.grappling is None
 
@@ -306,18 +321,23 @@ def test_hold_menu_shows_moves_and_odds():
     sim = arena.build(scenario, content, seed=1)
     app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 1)
     p, guard = g.player, sim.creatures[1]
+    app.handle_key("G")
+    text = screen_text(app)
+    assert "Grab sentry by..." in text and "right arm" in text and "their 9mm pistol" in text
+    app.handle_key("esc")
     for _ in range(10):
         if p.grappling is guard:
             break
-        app.handle_key("G")
-    assert p.grappling is guard
-    app.handle_key("G")
+        if g.mode != "play":
+            app.handle_key("esc")
+        _grab_by(app, g, "r_arm")
+    assert p.grappling is guard and g.mode == "grapple"
     text = screen_text(app)
-    assert g.mode == "grapple" and "Holding sentry" in text
+    assert "Holding sentry by the right arm" in text
     assert "tear off the right arm" in text and "comes right off" in text
+    assert "choke" not in text  # you're holding an arm, not the neck
     options = [o[0] for o in g._grapple_options()]
     app.handle_key(chr(ord("a") + options.index("tear off the right arm")))
     assert guard.body.part("r_arm").destroyed
     assert p.wielded is not None and "right arm" in p.wielded.name
-    app.handle_key("esc")
-    assert g.mode == "play"
+    assert p.grappling is None and g.mode == "play"

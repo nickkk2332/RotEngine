@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from . import grapple
 from .dice import check
 
 if TYPE_CHECKING:
@@ -220,7 +221,7 @@ def spotted(sim: "Sim", c: "Creature", t: "Creature") -> None:
     aw.level, aw.last_pos, aw.last_seen = AWARE, t.pos, sim.time
     c.alarmed = True
     sim.log(f"{c.name} spots {t.name}!")
-    if c.grappled_by is None:  # a chokehold keeps you quiet
+    if not grapple.silenced(c):  # a grip on the throat keeps you quiet
         emit_noise(sim, c, c.pos, "alarm", about=t)
 
 
@@ -230,7 +231,7 @@ def notice_attacker(sim: "Sim", c: "Creature", attacker: "Creature") -> None:
         aw = awareness(c, attacker)
         aw.level, aw.last_pos, aw.last_seen = AWARE, attacker.pos, sim.time
         c.alarmed = True
-        if c.controller != "player" and c.grappled_by is None:
+        if c.controller != "player" and not grapple.silenced(c):
             emit_noise(sim, c, c.pos, "alarm", about=attacker)
 
 
@@ -241,7 +242,7 @@ def _found_body(sim: "Sim", c: "Creature", body: "Creature") -> None:
     sim.log(f"{c.name} finds {body.name}{' dead' if body.dead else ' down'} and raises the alarm!")
     c.alarmed = True
     c.investigate, c.search_turns = body.pos, 6
-    if c.grappled_by is None:
+    if not grapple.silenced(c):
         emit_noise(sim, c, c.pos, "alarm")
 
 

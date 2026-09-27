@@ -289,23 +289,47 @@ you) raises the alarm and goes to the body. So drag bodies into the dark.
 awareness 100, a player needs to be able to make the attacker out. A knife from the
 dark gets no dodge or parry. This replaced blink's special case; it's now general.
 
-**Grappling.**
+**Grappling (`grapple.py`).** You grab a *thing*, then work on what you've got hold of.
+`G` asks where (with the odds for each); `G` again, while holding, lists only what
+that grip allows.
 
-| Action | Rules |
-|---|---|
-| Grab (`G`) | Wrestling roll; the target defends if they noticed you. A downed or dead body is simply taken hold of. |
-| While held | Can't move; −2 to attack, −3 to defend. `G` again opens the hold menu, which shows the odds for each move. |
-| Choke | Each second: CON roll at −2 per second choked, or go limp for 20–60 s (a timed knockout, no injury). The victim can't shout. Keep squeezing and it becomes hypoxia, then death ("strangled"). |
-| Take down | Contest (below). They're slammed prone (thrust damage from the floor) and stay held; pinned, they struggle at −2. |
-| Disarm | Contest, resisted by their ST or weapon skill. The weapon drops. |
-| Wrench a part | Contest. Joint lock / limb break / neck snap: `wrench` damage (swing from ST, +1 per 2 Wrestling above 12) to that part. See below. |
-| Struggle | Your max(ST, Wrestling) against their max(ST, Wrestling) + 2. −3 if taken from behind, −1 per second choked, −2 if pinned. |
-| Drag | The holder walks and the held body follows, at double the move cost. |
-| Hurl (`T`) / let go (`L`) | Hurl throws them like knockback: `(ST − 2 × their ST) / 4` tiles. |
+| Grip | Grab at | Moves |
+|---|---|---|
+| Neck | −5 | **choke** (sleeper hold), **strangle**, **snap** (wrench); the victim can't cry out |
+| Body | 0 | **bear hug** (squeeze the ribs), take down, hurl, drag |
+| Arm / hand | −2 / −4 | **wrench** (break or tear off), **crush**, throw down; a grip on the weapon hand or its arm can **disarm**, and they can't use that weapon while you hold it |
+| Leg / foot | −2 / −4 | wrench, crush, **trip** (take down at +2) |
+| Their weapon | −3 melee, −2 pistol, −1 long gun | **wrest** it away (no leverage bonus; win and it's yours). *Risky*: fail against someone who saw you coming and a blade cuts your hand, or a gun goes off at you point-blank. A blade ripped free through your grip slices your fingers |
 
-**The hold contest** (take down, disarm, wrench): your max(ST, Wrestling) + 2 for the
-leverage (+3 more from behind) against their max(ST, Wrestling), minus the usual
-penalties and 1 per second they've been choked. Someone unconscious doesn't resist.
+* **Grab roll:** Wrestling at the location's penalty, then their defense if they
+  noticed you. Against someone who doesn't see it coming there's no defense and the
+  penalty is halved (they aren't guarding their throat): a trained operative gets an
+  arm around an unaware guard's neck ~75% of the time. A miss alerts them. Downed or
+  dead bodies are simply taken hold of.
+* **Changing grip** is a new grab roll; a miss keeps the grip you had.
+* **While held:** can't move; −2 to attack, −3 to defend. The grip ends if the part
+  comes off, the weapon is dropped, or the two of you are separated.
+* **Choke:** each second a CON roll at −2 per second choked, or limp for 20–60 s (no
+  injury). Keep choking and it becomes hypoxia, then death ("strangled").
+* **Strangle:** the same, but their CON roll is +2 (slower to put them out) and each
+  second is also `squeeze` damage to the throat. A normal grip barely marks it; ST 20+
+  crushes the windpipe (`crushed_windpipe`: out at once, dead in under 2 minutes); the
+  Hulk crushes the neck.
+* **Squeeze / crush / bear hug:** `squeeze` damage (thrust from ST, +technique; armor
+  doesn't help; the part's `dr.squeeze` does) to the part you hold. It breaks bones
+  but never tears anything off.
+* **Take down:** slammed prone (thrust damage from the floor) and still held; pinned,
+  they struggle at −2.
+* **Struggle:** your max(ST, Wrestling) against theirs + 2 (leverage). −3 held from
+  behind, −2 pinned, −1 per second choked. Against a grip on your weapon: your ST or
+  weapon skill against their ST or Wrestling, no leverage.
+* **Hurl (`T`) / drag / let go (`L`):** hurl throws them like knockback
+  (`(ST − 2 × their ST) / 4` tiles); dragging costs double move time.
+
+**The hold contest** (take down, disarm, wrest, wrench, squeeze): your max(ST, Wrestling)
++ 2 for the leverage (+3 more from behind) against their max(ST, Wrestling), minus the
+usual penalties and 1 per second they've been choked. Someone unconscious doesn't
+resist.
 
 **Wrenching, snapping and tearing.** `wrench` is a JSON damage type with three
 properties: it fractures, it `ignores_armor` (a vest doesn't stop an arm lock, though
@@ -325,7 +349,7 @@ neck takes ×2. What that works out to:
 A **snapped neck** (fracture) applies the `broken_neck` status: paralysed, not
 breathing, unconscious, and dead of hypoxia in about 3½ minutes ("broken neck"). A
 destroyed neck is instant. Cranking a human arm again and again breaks it; it never
-tears it off.
+tears it off. When the part you hold comes off, you're holding it, not them.
 
 **Severed parts are items.** A part with `sever_item` leaves one behind when it comes
 off, by any means: a sword takes an arm off, a blast takes a leg, a strong hold
@@ -335,10 +359,14 @@ leg a two-handed one, and all of them can be thrown (`t`), with thrown damage fr
 Anyone can pick them up (`g`); ordinary NPCs don't pick up body parts to fight with.
 
 **Brutes.** A creature template with a `"grapple"` block (`chance` to grab someone in
-reach instead of hitting them; `tear`, the chance to go for an arm rather than the
-neck) fights like the Hulk: it grabs a soldier, tears an arm off, beats the next
-soldier with it or throws it at one out of reach, and twists heads off. Everyone else
-lets go of holds.
+reach instead of hitting them; `tear`, the chance to go for the gun arm) fights like
+the Hulk: it grabs the gun arm and tears it off, beats the next soldier with it or
+throws it at one out of reach; otherwise it grabs the neck (if the odds are fair) or
+the body, and twists or crushes. Everyone else lets go of holds.
+
+**Body plan fields:** `grab` (can be grabbed), `choke` (a grip there chokes, strangles
+and silences), a `by_type.wrench` entry (can be wrenched), `dr.wrench` / `dr.squeeze`
+(how the part resists). A new body plan gets grappling by setting these.
 
 **The log** in play only shows what your character witnessed: lines are tagged with
 where they happened (`Sim.focus`), and sounds you heard arrive as private lines.

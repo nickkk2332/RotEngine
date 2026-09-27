@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from . import effects, perception
+from . import effects, grapple, perception
 from .body import Injury
 from .creature import Item
 from .dice import Dice, check, p_success
@@ -463,7 +463,7 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
         target.shock = min(4, target.shock + shock)
         target.aim_target = None
         _after_injury(sim, target, inj, prev_hp)
-        if (target.conscious and inj.injury >= target.max_hp / 3 and target.choked == 0
+        if (target.conscious and inj.injury >= target.max_hp / 3 and not grapple.silenced(target)
                 and not target.has_trait("high_pain_threshold")):
             perception.emit_noise(sim, target, target.pos, "scream")
         if not target.dead:

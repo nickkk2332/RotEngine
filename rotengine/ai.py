@@ -11,7 +11,7 @@ from __future__ import annotations
 import heapq
 from typing import TYPE_CHECKING, Callable
 
-from . import actions, combat, effects, perception, physics
+from . import actions, combat, effects, grapple, perception, physics
 
 if TYPE_CHECKING:
     from .creature import Creature
@@ -191,27 +191,34 @@ def _grenade_throw(sim: "Sim", c: "Creature", target: "Creature", goal: "Pos",
 
 def _grapple_turn(sim: "Sim", c: "Creature") -> int:
     """Holding someone. Most NPCs just let go; creatures with a "grapple"
-    style (brutes like the Hulk) tear a limb off to use as a club, or twist
-    the head off, then drop what's left."""
+    style (brutes like the Hulk) wrench or crush whatever they've got hold
+    of: the arm comes off (and becomes a club), the head comes off."""
     t = c.grappling
     style = c.template.get("grapple")
     if not style or t.dead or not t.conscious or t.team == c.team:
-        return actions.release(sim, c) or IDLE_MS
-    parts = actions.wrenchable(t)
-    arms = [p for p in parts if "limb" in p.tags and not p.data.get("parent")
-            and "stance" not in p.tags]
-    neck = [p for p in parts if p.id == "neck"]
-    if arms and c.wielded is None and sim.rng.random() < style.get("tear", 0.5):
-        # the gun arm first
-        choice = next((a for a in arms if any(q.data.get("parent") == a.id and q.data.get("primary")
-                                              for q in t.body.parts.values())), arms[0])
-    elif neck:
-        choice = neck[0]
-    elif parts:
-        choice = sim.rng.choice(parts)
-    else:
-        return actions.release(sim, c) or IDLE_MS
-    return actions.wrench(sim, c, choice.id) or actions.release(sim, c) or IDLE_MS
+        return grapple.release(sim, c) or IDLE_MS
+    options = grapple.moves(c)
+    for move in ("wrench", "squeeze", "wrest"):
+        if move in options:
+            return getattr(grapple, move)(sim, c) or grapple.release(sim, c) or IDLE_MS
+    return grapple.release(sim, c) or IDLE_MS
+
+
+def _brute_grip(sim: "Sim", c: "Creature", t: "Creature") -> str:
+    """Where a brute grabs: the gun arm (to tear it off and keep it), the
+    neck, or the body."""
+    targets = grapple.grab_targets(t)
+    style = c.template["grapple"]
+    if c.wielded is None and sim.rng.random() < style.get("tear", 0.5):
+        for hand in t.body.parts.values():
+            arm = hand.data.get("parent")
+            if "grasp" in hand.tags and hand.data.get("primary") and arm in targets:
+                return arm
+    # the neck if it's a fair chance, else a bear hug
+    neck = next((p for p in targets if p != grapple.WEAPON and t.body.part(p).data.get("choke")), None)
+    if neck is not None and grapple.grab_odds(sim, c, t, neck) >= 0.4:
+        return neck
+    return "torso" if "torso" in targets else targets[0]
 
 
 def _brute_moves(sim: "Sim", c: "Creature", target: "Creature", visible: list["Creature"]) -> int | None:
@@ -223,8 +230,8 @@ def _brute_moves(sim: "Sim", c: "Creature", target: "Creature", visible: list["C
     style = c.template.get("grapple")
     near = sim.in_melee_reach(c.pos, target.pos) and c.pos[2] == target.pos[2]
     if (style and near and target.conscious and target.grappled_by is None
-            and sim.rng.random() < style.get("chance", 0.3)):
-        cost = actions.grab(sim, c, target)
+            and grapple.grab_targets(target) and sim.rng.random() < style.get("chance", 0.3)):
+        cost = grapple.grab(sim, c, target, _brute_grip(sim, c, target))
         if cost is not None:
             return cost
     held = c.wielded

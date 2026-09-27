@@ -20,7 +20,7 @@ architecture, the rules, and the roadmap.
 | `.` / numpad 5 | wait half a second (of your own time) |
 | `r` / `m` / `z` / `g` | reload / first aid / drop prone or stand / pick up (a live grenade first, then a weapon, then anything throwable) |
 | `s` | sneak: half speed, near silent, much harder to spot |
-| `G` / `L` | grab someone next to you / let go; move while holding to drag. `G` while holding opens the hold menu: choke, take down, disarm, wrench a limb, snap the neck, or (if you're strong enough) tear it off |
+| `G` / `L` | grab someone next to you *by something*: neck, body, an arm, a leg, or their weapon (risky), with the odds for each. `G` again: what that grip allows (choke, strangle, snap; wrench, crush, tear off; trip, take down, disarm; bear hug). Move to drag; `L` let go |
 | `w` | swap to your other weapon |
 | `t` | throw a grenade, flashbang, smoke, Molotov... (cursor to aim, with your odds) |
 | `T` / `P` | hurl the person you're holding / plant a breaching charge (then a direction) |
@@ -61,7 +61,7 @@ python -m pytest
 | **Tempo** | Continuous time where each creature runs on its own clock. A tempo-8 speedster acts, reacts and recovers 8× as fast and hits with the momentum of it. |
 | **Tactics** | Facing (no defense from behind), a reaction window that punishes being mobbed, cover, stray rounds that hit bystanders, fatigue, first aid. |
 | **Physics** | Doors (locked ones get breached), smashing walls, throwing things and people, grenades with real fuses (throw them back), flashbangs, smoke that blocks sight, tear gas, fire that spreads through wood and burns floors out from under you. |
-| **Grappling** | Chokeholds, takedowns, disarms, joint locks, neck snaps. Armor doesn't stop a joint lock. A normal person breaks an arm; the Hulk tears it off and beats the next soldier with it. Severed limbs and heads are items you can swing and throw. |
+| **Grappling** | Grab a specific part, then work on it: choke or strangle a neck, wrench or crush an arm, trip a leg, bear-hug the body, grab the gun itself (a miss can get you shot). Holding the gun arm stops the gun. Armor doesn't stop a joint lock. A normal person breaks an arm; the Hulk tears it off and beats the next soldier with it. Severed limbs and heads are items you can swing and throw. |
 | **Stealth** | Per-enemy awareness from 3d6 Perception vs Stealth, light and darkness (shootable lamps), noise that travels and is muffled by walls, alarms, guards finding bodies, patrols, no defense against the unseen, chokeholds, dragging bodies. |
 | **Threshold damage** | DR subtracts, so a rifle mostly bounces off a DR 25 hide, and a ST 60 punch ignores a vest. |
 | **Voxel world** | z-levels, per-voxel walls and floors with HP/DR, bullets through glass and drywall, knockback through walls, falling, and structural collapse. |
@@ -88,7 +88,8 @@ corpse, dropped weapons by their item glyph. Terrain: `#` concrete/brick, `|` dr
 ## Layout
 
 ```
-rotengine/   dice, content, body, creature, world, effects, combat, sim, ai, arena, render
+rotengine/   dice, content, body, creature, world, effects, combat, grapple, physics,
+             perception, actions, sim, ai, arena, render, fov; ui/ (python-tcod)
 data/core/   base game content (JSON)
 data/mods/   mods: a folder with modinfo.json + JSON files
 data/scenarios/  arena maps
