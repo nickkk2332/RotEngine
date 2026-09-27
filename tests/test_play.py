@@ -190,3 +190,56 @@ def test_quit_to_menu():
     assert "Leave this fight?" in screen_text(app)
     app.handle_key("y")
     assert "Play a scenario" in screen_text(app)
+
+
+def test_stealth_controls():
+    app = new_app("stealth_compound", "operative", seed=1)
+    g = app.screen
+    p = g.player
+    assert "unseen" in screen_text(app)
+    app.handle_key("s")
+    assert p.sneaking and "sneaking" in screen_text(app)
+    app.handle_key("w")
+    assert p.wielded.id == "suppressed_pistol"
+    app.handle_key("v")
+    assert g.show_cones
+    screen_text(app)
+
+
+def test_chokehold_from_the_ui():
+    from rotengine.ui.game import GameScreen
+    scenario = {"id": "yard", "name": "Yard", "start_alert": False, "ambient_light": 0.08,
+                "levels": [["," * 30] * 5],
+                "teams": {"you": [{"creature": "operative", "at": [4, 2, 0]}],
+                          "them": [{"creature": "sentry", "at": [5, 2, 0], "facing": [1, 0]},
+                                   {"creature": "sentry", "at": [28, 4, 0], "facing": [1, 0],
+                                    "name": "far sentry"}]}}
+    app = new_app()
+    content = app.content_for(scenario)
+    sim = arena.build(scenario, content, seed=2)
+    app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 2)
+    p, guard = g.player, sim.creatures[1]
+    for _ in range(30):  # G grabs; G again chokes; if he wriggles free, G grabs him again
+        if not guard.conscious:
+            break
+        app.handle_key("G")
+    assert not guard.conscious and not guard.dead
+    assert p.grappling is guard and "holding sentry" in screen_text(app)
+    app.handle_key("L")
+    assert p.grappling is None
+
+
+def test_log_only_shows_what_you_witness():
+    app = new_app("stealth_compound", "operative", seed=1)
+    g = app.screen
+    sim = g.sim
+    far = next(c for c in sim.creatures if c.name == "tower sentry")
+    hidden = next((x, y, 0) for y in range(sim.world.height) for x in range(sim.world.width)
+                  if (x, y, 0) not in g.visible)
+    with sim.focus(hidden):
+        sim.log("a secret thing happens far away")
+    sim.log("You hear something.", private_to=g.player.uid)
+    sim.log("A thing only someone else hears.", private_to=far.uid)
+    text = screen_text(app)
+    assert "You hear something." in text
+    assert "secret thing" not in text and "someone else" not in text

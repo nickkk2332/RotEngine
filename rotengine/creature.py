@@ -58,6 +58,7 @@ class Creature:
         eq = template.get("equipment", {})
         self.wielded = Item(content.get("item", eq["wield"])) if eq.get("wield") else None
         self.worn = [Item(content.get("item", i)) for i in eq.get("wear", [])]
+        self.carried = [Item(content.get("item", i)) for i in eq.get("carry", [])]  # swap with 'w' 
 
         self.facing: tuple[int, int] = (1, 0)
         self.shock = 0                    # one-off pain penalty on the next action
@@ -71,6 +72,26 @@ class Creature:
         self.target: Creature | None = None
         self.controller = "ai"  # or "player": the sim pauses for input on its turns
         self.cooldowns: dict[str, float] = {}  # power id -> world time it's ready again
+
+        # perception and stealth (see rotengine/perception.py)
+        self.awareness: dict = {}          # enemy uid -> Awareness
+        self.investigate: "Pos | None" = None  # somewhere suspicious to go and check
+        self.search_turns = 0             # how long to poke around once there
+        self.alarmed = False              # found a body / heard the alarm: stays on guard
+        self.known_bodies: set[int] = set()
+        self.post: "Pos" = pos            # where a guard returns to when things calm down
+        self.post_facing: tuple[int, int] | None = None
+        self.patrol: list = []            # waypoints; walked in a loop when calm
+        self.patrol_i = 0
+        self.sneaking = False
+        self.last_moved = -10_000         # world ms of the last step (movement catches the eye)
+        self.noisy_until = -10_000        # attacking/shooting makes you easy to spot for a bit
+
+        # grappling
+        self.grappling: Creature | None = None
+        self.grappled_by: Creature | None = None
+        self.choked = 0                   # seconds spent in a chokehold
+        self.rear_hold = False            # (as the holder) took them from behind
 
     def __repr__(self) -> str:
         return f"<{self.name}#{self.uid} {self.team} {self.pos}>"
@@ -204,6 +225,8 @@ class Creature:
         for d in self.status_defs():
             mult *= d.get("move_mult", 1.0)
         mult *= (1.0, 0.5, 0.25)[self.fatigue_level()]
+        if self.sneaking:
+            mult *= 0.5
         return max(0.25, base * mult)
 
     def dodge(self) -> int:

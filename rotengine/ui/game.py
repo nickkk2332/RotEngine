@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING
 
 import tcod.console
 
-from .. import actions, ai, arena, combat, fov
+from .. import actions, ai, arena, combat, fov, perception
 from ..creature import Creature
 from .keys import DIRECTIONS, VI_KEYS
 from .menus import MainMenu, Screen
-from .theme import (BLACK, BLUE, CURSOR_BG, CYAN, DARK, DARK_RED, DIM, GREEN, GREY, LOG_H, LOG_Y,
+from .theme import (BLACK, BLUE, CONE_FRONT_BG, CONE_SIDE_BG, CURSOR_BG, CYAN, SPOTTED_BG, SUSPICIOUS_BG, DARK, DARK_RED, DIM, GREEN, GREY, LOG_H, LOG_Y,
                     MAP_H, MAP_W, MAP_X, MAP_Y, ORANGE, PANEL_BG, RED, SELECT_BG, SIDE_W, SIDE_X,
                     TARGET_BG, TITLE, WHITE, YELLOW, dim, material_fg)
 from .widgets import bar, box, print_wrapped, wrap
@@ -34,6 +34,11 @@ HELP = [
     ("F", "quick attack your target (steps closer if out of reach)"),
     ("Tab", "cycle target"),
     (". or numpad 5", "wait half a second (of your time)"),
+    ("s", "sneak on/off: slower, quieter, harder to spot"),
+    ("G", "grab someone next to you; again to choke (drag by moving)"),
+    ("L", "let go"),
+    ("w", "swap to your other weapon"),
+    ("v", "show where enemies are looking"),
     ("r", "reload"),
     ("m", "first aid (yourself, or a bleeding ally next to you)"),
     ("z", "drop prone / stand up"),
@@ -110,6 +115,7 @@ class GameScreen(Screen):
         self.cursor: "Pos | None" = None
         self.menu: AttackMenu | None = None
         self.summary: list[str] = []
+        self.show_cones = False
         self.status = self.sim.advance()
         self._on_turn()
 
@@ -119,9 +125,15 @@ class GameScreen(Screen):
         t = self.player.target
         return t if t is not None and t.active and t.team != self.player.team else None
 
+    def _sees(self, c: Creature) -> bool:
+        """Can the player make this creature out (line of sight and enough light)?"""
+        if c is self.player or c.team == self.player.team:
+            return c.pos in self.visible
+        return c.pos in self.visible and perception.can_make_out(self.sim, self.player, c)
+
     def _visible_enemies(self) -> list[Creature]:
         p = self.player
-        foes = [c for c in self.sim.creatures if c.team != p.team and c.active and c.pos in self.visible]
+        foes = [c for c in self.sim.creatures if c.team != p.team and c.active and self._sees(c)]
         return sorted(foes, key=lambda c: (self.sim.distance(p, c), c.uid))
 
     def _on_turn(self) -> None:
@@ -162,6 +174,8 @@ class GameScreen(Screen):
     def _key_play(self, key: str):
         p, sim = self.player, self.sim
         d = self._direction(key)
+        if d is not None and p.grappled_by is not None:
+            return self._do(actions.struggle(sim, p))
         if d is not None:
             x, y, z = p.pos
             dest = (x + d[0], y + d[1], z)
@@ -207,6 +221,36 @@ class GameScreen(Screen):
             return None
         if key == "r":
             return self._do(actions.reload(sim, p), "Nothing to reload.")
+        if key == "s":
+            self._do(actions.toggle_sneak(sim, p))
+            self.notice = "Sneaking: slow and quiet." if p.sneaking else "Walking normally."
+            return None
+        if key == "G":
+            held = p.grappling
+            if held is not None:
+                if held.dead:
+                    self.notice = "They're dead. Move to drag the body; L to let go."
+                    return None
+                self._do(actions.choke(sim, p))
+                if not held.dead and not held.conscious:
+                    self.notice = "They're out cold. Squeezing longer kills them; L to let go."
+                return None
+            # enemies next to you, or anyone down (to drag them out of sight)
+            near = [c for c in sim.creatures
+                    if c is not p and c.pos[2] == p.pos[2] and sim.in_melee_reach(p.pos, c.pos)
+                    and (c.team != p.team or not c.active)]
+            if not near:
+                self.notice = "Nobody next to you to grab."
+                return None
+            who = self.target if self.target in near else min(near, key=lambda c: (not c.active, c.uid))
+            return self._do(actions.grab(sim, p, who), "You can't get a grip on them.")
+        if key == "L":
+            return self._do(actions.release(sim, p), "You're not holding anyone.")
+        if key == "w":
+            return self._do(actions.swap_weapon(sim, p), "You have nothing else to draw.")
+        if key == "v":
+            self.show_cones = not self.show_cones
+            return None
         if key == "m":
             return self._first_aid()
         if key == "z":
@@ -438,6 +482,37 @@ class GameScreen(Screen):
         if self.notice:
             con.print(len(title) + 3, 0, self.notice[:con.width - len(title) - len(right) - 4], fg=YELLOW)
 
+    def _lit(self, pos, fg):
+        """Shade a visible tile by how lit it is (night-vision goggles show
+        the dark in green)."""
+        level = perception.light_at(self.sim, pos)
+        if level >= 0.99:
+            return fg
+        if self.player.has_trait("night_vision"):
+            f = 0.55 + 0.45 * min(1.0, level + 0.3)
+            return (int(fg[0] * f * 0.6), int(min(255, fg[1] * f * 1.1 + 25)), int(fg[2] * f * 0.6))
+        return dim(fg, 0.3 + 0.7 * min(1.0, level))
+
+    def _cone_tiles(self) -> dict:
+        """Tiles each visible enemy is watching: front arc bright, sides dim."""
+        tiles: dict = {}
+        sim, z = self.sim, self.view_z
+        for c in self.sim.creatures:
+            if c.team == self.player.team or not c.active or c.pos[2] != z or not self._sees(c):
+                continue
+            cx, cy, _ = c.pos
+            for y in range(cy - 10, cy + 11):
+                for x in range(cx - 10, cx + 11):
+                    pos = (x, y, z)
+                    if pos not in self.visible or pos == c.pos:
+                        continue
+                    side = combat.arc(c, pos)
+                    if side == "rear" or not sim.world.has_los(c.pos, pos):
+                        continue
+                    if side == "front" or tiles.get(pos) != "front":
+                        tiles[pos] = side
+        return tiles
+
     def _render_map(self, con) -> None:
         w, z = self.sim.world, self.view_z
         ox, oy = self._camera()
@@ -452,36 +527,61 @@ class GameScreen(Screen):
                 pos = (x, y, z)
                 if pos in self.visible:
                     ch, fg = self._tile(pos)
+                    fg = self._lit(pos, fg)
                 elif pos in self.seen:
                     ch, fg = self.seen[pos]
-                    fg = dim(fg, 0.5)
+                    fg = dim(fg, 0.4)
                 else:
                     continue
                 con.print(MAP_X + sx, MAP_Y + sy, ch, fg=fg)
+        if self.show_cones:
+            for pos, side in self._cone_tiles().items():
+                self._highlight(con, pos, CONE_FRONT_BG if side == "front" else CONE_SIDE_BG)
         marks: dict = {}
         for pos, item in self.sim.items:
             if pos[2] == z and pos in self.visible:
-                marks[pos[:2]] = (item.data.get("glyph", "("), CYAN)
+                marks[pos[:2]] = (item.data.get("glyph", "("), CYAN, None)
         for layer in ("dead", "down", "up"):
             for c in self.sim.creatures:
                 state = "dead" if c.dead else "up" if c.active else "down"
-                if state != layer or c.pos[2] != z or (c.pos not in self.visible and c is not self.player):
+                if state != layer or c.pos[2] != z or not self._sees(c):
                     continue
                 if state == "dead":
-                    marks[c.pos[:2]] = ("%", DARK_RED)
+                    marks[c.pos[:2]] = ("%", DARK_RED, None)
                 elif state == "down":
-                    marks[c.pos[:2]] = ("&", RED if c.team != self.player.team else GREEN)
+                    marks[c.pos[:2]] = ("&", RED if c.team != self.player.team else GREEN, None)
                 else:
                     fg = YELLOW if c is self.player else GREEN if c.team == self.player.team else RED
-                    marks[c.pos[:2]] = (c.glyph, fg)
-        for (x, y), (ch, fg) in marks.items():
+                    marks[c.pos[:2]] = (c.glyph, fg, self._alert_bg(c))
+        for (x, y), (ch, fg, bg) in marks.items():
             if ox <= x < ox + MAP_W and oy <= y < oy + MAP_H:
-                con.print(MAP_X + x - ox, MAP_Y + y - oy, ch, fg=fg)
+                con.print(MAP_X + x - ox, MAP_Y + y - oy, ch, fg=fg, bg=bg)
         t = self.target
-        if t is not None and t.pos[2] == z and t.pos in self.visible:
+        if t is not None and t.pos[2] == z and self._sees(t):
             self._highlight(con, t.pos, TARGET_BG)
         if self.cursor is not None:
             self._highlight(con, self.cursor, CURSOR_BG)
+
+    def _alert_bg(self, c: Creature):
+        """Background on an enemy's glyph: amber = suspicious, red = has seen you."""
+        if c.team == self.player.team:
+            return None
+        aw = c.awareness.get(self.player.uid)
+        if aw is not None and aw.level >= perception.AWARE:
+            return SPOTTED_BG
+        if (aw is not None and aw.level >= perception.SUSPICIOUS) or perception.state(c) != "calm":
+            return SUSPICIOUS_BG
+        return None
+
+    def _awareness_word(self, c: Creature) -> str:
+        aw = c.awareness.get(self.player.uid)
+        if aw is not None and aw.level >= perception.AWARE:
+            return "has spotted you"
+        if aw is not None and aw.level >= perception.SUSPICIOUS:
+            return f"suspicious ({aw.level:.0f}%)"
+        if perception.state(c) == "searching":
+            return "searching for something"
+        return "unaware of you" + (f" ({aw.level:.0f}%)" if aw is not None and aw.level >= 1 else "")
 
     def _highlight(self, con, pos, bg) -> None:
         ox, oy = self._camera()
@@ -531,15 +631,19 @@ class GameScreen(Screen):
         else:
             con.print(x, y, "unarmed", fg=CYAN)
         y += 1
+        if p.carried:
+            con.print(x, y, ("also: " + ", ".join(i.name for i in p.carried) + " (w)")[:w], fg=GREY)
+            y += 1
         if p.aim_target is not None and self.target is not None and p.aim_target == self.target.uid:
             con.print(x, y, f"aimed at {self.target.name}"[:w], fg=CYAN)
             y += 1
         y += 1
+        y = self._render_stealth(con, x, y, w)
         wounds = [ln for ln in self._wound_lines(p)]
         if wounds:
             con.print(x, y, "Wounds", fg=TITLE)
             y += 1
-            for line, fg in wounds[:8]:
+            for line, fg in wounds[:6]:
                 con.print(x + 1, y, line[:w - 1], fg=fg)
                 y += 1
             y += 1
@@ -547,12 +651,16 @@ class GameScreen(Screen):
             self._render_look_info(con, x, y, w)
             return
         t = self.target
-        if t is not None and t.pos in self.visible:
+        if t is not None and self._sees(t):
             con.print(x, y, "Target", fg=TITLE)
             y += 1
             con.print(x + 1, y, f"{t.name} · {self.sim.distance(p, t)} tiles"[:w - 1], fg=RED)
             y += 1
             y += print_wrapped(con, x + 1, y, w - 1, self._condition(t), fg=WHITE, max_lines=2)
+            aware = self._awareness_word(t)
+            con.print(x + 1, y, aware[:w - 1], fg=RED if "spotted" in aware else ORANGE
+                      if "suspicious" in aware or "searching" in aware else GREEN)
+            y += 1
             weapon = t.wielded.name if t.wielded else "unarmed"
             con.print(x + 1, y, weapon[:w - 1], fg=GREY)
             y += 1
@@ -567,6 +675,29 @@ class GameScreen(Screen):
                 y += 1
         n = len(self._visible_enemies())
         con.print(x, con.height - 2, f"{n} enem{'y' if n == 1 else 'ies'} in sight"[:w], fg=GREY)
+
+    def _render_stealth(self, con, x: int, y: int, w: int) -> int:
+        p, sim = self.player, self.sim
+        mode = "prone" if p.has_status("prone") else "sneaking" if p.sneaking else "walking"
+        light = perception.light_word(perception.light_at(sim, p.pos))
+        con.print(x, y, f"{mode} · {light}"[:w], fg=GREEN if p.sneaking and light != "bright light" else GREY)
+        y += 1
+        watchers = [c for c in sim.creatures if c.team != p.team and c.active
+                    and perception.aware_of(c, p)]
+        if watchers:
+            con.print(x, y, f"spotted by {len(watchers)}"[:w], fg=RED)
+        else:
+            con.print(x, y, "unseen", fg=GREEN)
+        y += 1
+        if p.grappling is not None:
+            h = p.grappling
+            state = "dead" if h.dead else "out cold" if not h.conscious else f"choked {h.choked}s"
+            con.print(x, y, f"holding {h.name} ({state})"[:w], fg=CYAN)
+            y += 1
+        if p.grappled_by is not None:
+            con.print(x, y, f"held by {p.grappled_by.name}: move to struggle"[:w], fg=RED)
+            y += 1
+        return y + 1
 
     def _wound_lines(self, c: Creature):
         for part in c.body.parts.values():
@@ -639,7 +770,8 @@ class GameScreen(Screen):
     def _render_log(self, con) -> None:
         lines: list[tuple[str, tuple]] = []
         name = self.player.name
-        for raw in self.sim.lines[-40:]:
+        witnessed = [raw for raw, meta in zip(self.sim.lines, self.sim.line_meta) if self._witnessed(raw, meta)]
+        for raw in witnessed[-40:]:
             body = raw.split("] ", 1)[-1]
             fg = GREY
             if " dies" in body or "falls unconscious" in body:
@@ -654,9 +786,20 @@ class GameScreen(Screen):
         for i, (line, fg) in enumerate(lines[-LOG_H:]):
             con.print(0, LOG_Y + i, line, fg=fg)
 
+    def _witnessed(self, raw: str, meta) -> bool:
+        """Log lines the player's character could know about: things that
+        happened where they can see, sounds they heard, and anything about
+        themselves."""
+        positions, private_to = meta
+        if private_to is not None:
+            return private_to == self.player.uid
+        if self.player.name in raw or not positions:
+            return True
+        return any(pos in self.visible for pos in positions)
+
     def _render_hints(self, con) -> None:
         hints = {
-            "play": "move/bump · f attack · F quick · Tab target · r reload · m aid · z prone · p power · x look · ? help",
+            "play": "move/bump · f attack · F quick · s sneak · G grab/choke · L let go · w swap · v cones · ? help",
             "target": "Tab/arrows: choose target · Enter: attack options · Esc: back",
             "attack": "↑↓ location · ←→ feint · Space aim · < > attack · Enter go · Esc back",
             "powers": "letter: use on your target · Esc: back",

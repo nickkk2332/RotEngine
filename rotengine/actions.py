@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from . import combat
+from . import combat, perception
 from .dice import check
 
 if TYPE_CHECKING:
@@ -23,15 +23,36 @@ FIRST_AID_MS = 5000
 STAND_MS = 1000
 GO_PRONE_MS = 500
 PICKUP_MS = 1000
+SWAP_MS = 1000
+GRAB_MS = 1000
+CHOKE_MS = 1000
+CHOKE_HYPOXIA = 3.0          # brain damage per second of choking someone already out
+KNOCKOUT_MS = (20_000, 60_000)  # how long a choke keeps someone under
 
 
 def step(sim: "Sim", c: "Creature", to: "Pos") -> int | None:
-    """Walk (or crawl) one tile to an adjacent free tile, or climb stairs."""
-    if to not in set(sim.world.neighbors(c.pos)) or not sim.is_free(to, ignore=c):
+    """Walk (or crawl) one tile to an adjacent free tile, or climb stairs.
+    Makes noise (less when sneaking or crawling). Someone in your grip gets
+    dragged along into the tile you left."""
+    if c.grappled_by is not None:
         return None
+    victim = c.grappling
+    if to not in set(sim.world.neighbors(c.pos)) or not sim.is_free(to, ignore=victim or c):
+        return None
+    if to == getattr(victim, "pos", None):
+        return None
+    old = c.pos
     sim.move_creature(c, to)
-    c.exert(MOVE_EXERTION)
-    return 2000 if c.has_status("prone") else int(1000 / c.move_per_second)
+    c.exert(MOVE_EXERTION * (3 if victim else 1))
+    c.last_moved = sim.time
+    quiet = c.sneaking or c.has_status("prone")
+    perception.emit_noise(sim, c, c.pos, "sneak" if quiet else "footstep")
+    cost = 2000 if c.has_status("prone") else int(1000 / c.move_per_second)
+    if victim is not None:
+        victim.pos = old
+        sim.check_fall(victim)
+        cost *= 2
+    return cost
 
 
 def step_dir(sim: "Sim", c: "Creature", dx: int, dy: int) -> int | None:
@@ -112,6 +133,136 @@ def pick_up(sim: "Sim", c: "Creature") -> int | None:
             sim.log(f"{c.name} picks up the {item.name}.")
             return PICKUP_MS
     return None
+
+
+def toggle_sneak(sim: "Sim", c: "Creature") -> int:
+    c.sneaking = not c.sneaking
+    return 100
+
+
+def swap_weapon(sim: "Sim", c: "Creature") -> int | None:
+    """Put away what's in hand and draw the next carried weapon."""
+    options = [i for i in c.carried if i.attacks and c.can_grip(i)]
+    if not options:
+        return None
+    nxt = options[0]
+    c.carried.remove(nxt)
+    if c.wielded is not None:
+        c.carried.append(c.wielded)
+    c.wielded = nxt
+    sim.log(f"{c.name} draws the {nxt.name}.")
+    return SWAP_MS
+
+
+# -- grappling ---------------------------------------------------------------
+def grab(sim: "Sim", c: "Creature", target: "Creature") -> int | None:
+    """Get hold of someone next to you. From behind, or on someone who never
+    saw you coming, there's no defending against it."""
+    if (c.grappling is not None or target is c or not c.body.functional_with("grasp")
+            or not sim.in_melee_reach(c.pos, target.pos) or c.pos[2] != target.pos[2]
+            or target.grappled_by is not None):
+        return None
+    combat.face(c, target.pos)
+    if not target.conscious:  # a body: just take hold of it (to drag it somewhere dark)
+        with sim.focus(c.pos, target.pos):
+            sim.log(f"{c.name} takes hold of {target.name}'s {'body' if target.dead else 'limp form'}.")
+        c.grappling, target.grappled_by = target, c
+        c.add_status("grappling", None)
+        target.add_status("grappled", None)
+        return GRAB_MS
+    c.exert(0.3)
+    defense = combat.defense_against(sim, c, target, "melee")
+    roll = check(sim.rng, c.skill("wrestling") - c.action_penalty("melee"))
+    perception.emit_noise(sim, c, c.pos, "struggle")
+    with sim.focus(c.pos, target.pos):
+        if not roll.success:
+            sim.log(f"{c.name} lunges for {target.name} and misses.")
+            perception.notice_attacker(sim, target, c)
+            return GRAB_MS
+        if defense is not None:
+            combat.spend_defense(sim, target)
+            if check(sim.rng, defense[1]).success:
+                sim.log(f"{c.name} grabs at {target.name}, who twists away.")
+                perception.notice_attacker(sim, target, c)
+                return GRAB_MS
+        how = "" if defense is not None else (" from behind" if target.conscious else "")
+        sim.log(f"{c.name} gets {target.name} in a hold{how}.")
+    c.grappling, target.grappled_by = target, c
+    c.rear_hold = defense is None  # taken from behind: much harder to get out of
+    c.add_status("grappling", None)
+    target.add_status("grappled", None)
+    perception.notice_attacker(sim, target, c)  # they know now, but the hold keeps them quiet
+    return GRAB_MS
+
+
+def choke(sim: "Sim", c: "Creature") -> int | None:
+    """Squeeze. The one being choked can't cry out; each second they roll
+    CON (worse every second) or go limp for half a minute or so. Keep
+    squeezing after that and you're killing them."""
+    t = c.grappling
+    if t is None or t.dead:
+        return None
+    t.choked += 1
+    perception.emit_noise(sim, c, c.pos, "sneak")
+    with sim.focus(c.pos, t.pos):
+        if t.conscious:
+            if not check(sim.rng, t.stat("CON") - 2 * t.choked + 2).success:
+                sim.log(f"{t.name} goes limp in {c.name}'s chokehold.")
+                t.statuses.pop("prone", None)
+                t.add_status("unconscious", sim.time + sim.rng.randint(*KNOCKOUT_MS))
+                t.add_status("prone", None)
+            else:
+                sim.log(f"{c.name} tightens the chokehold on {t.name}.")
+        else:
+            t.body.hypoxia += CHOKE_HYPOXIA
+            if t.body.hypoxia >= 100:
+                combat.kill(sim, t, "strangled")
+                release(sim, c)
+            elif t.choked % 5 == 0:
+                sim.log(f"{c.name} keeps squeezing {t.name}'s throat...")
+    return CHOKE_MS
+
+
+def release(sim: "Sim", c: "Creature") -> int | None:
+    t = c.grappling
+    if t is None:
+        return None
+    c.grappling = None
+    c.statuses.pop("grappling", None)
+    if t.grappled_by is c:
+        t.grappled_by = None
+        t.statuses.pop("grappled", None)
+    t.choked = 0
+    return 200
+
+
+def struggle(sim: "Sim", c: "Creature") -> int | None:
+    """Try to break a hold: your ST against theirs (they have the leverage).
+    Held from behind is -3; every second of choking saps you another -1."""
+    g = c.grappled_by
+    if g is None:
+        return None
+    penalty = c.action_penalty("melee") + (3 if getattr(g, "rear_hold", False) else 0) + c.choked
+    mine = check(sim.rng, max(c.stat("ST"), c.skill("wrestling")) - penalty)
+    theirs = check(sim.rng, max(g.stat("ST"), g.skill("wrestling")) + 2)
+    perception.emit_noise(sim, c, c.pos, "struggle")
+    with sim.focus(c.pos, g.pos):
+        if mine.success and (not theirs.success or mine.margin > theirs.margin):
+            sim.log(f"{c.name} breaks free of {g.name}!")
+            release(sim, g)
+        else:
+            sim.log(f"{c.name} struggles in {g.name}'s grip.")
+    return 1000
+
+
+def check_grapple(sim: "Sim", c: "Creature") -> None:
+    """Holds break when the two get separated or the holder can't hold on."""
+    for holder, held in ((c, c.grappling), (c.grappled_by, c)):
+        if holder is None or held is None:
+            continue
+        if (holder.dead or not holder.conscious
+                or not sim.in_melee_reach(holder.pos, held.pos) or not holder.body.functional_with("grasp")):
+            release(sim, holder)
 
 
 def power_blocked(sim: "Sim", c: "Creature", power: dict) -> str | None:

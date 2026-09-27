@@ -10,5 +10,7 @@
   {"type": "status", "id": "cardiac_arrest", "name": "heart stopped",
    "description": "No circulation. Seconds of consciousness left, then brain death within minutes.",
    "attack_mod": -2, "defense_mod": -2},
-  {"type": "status", "id": "enraged", "name": "enraged", "attack_mod": 1, "defense_mod": -1}
+  {"type": "status", "id": "enraged", "name": "enraged", "attack_mod": 1, "defense_mod": -1},
+  {"type": "status", "id": "grappled", "name": "held", "attack_mod": -2, "defense_mod": -3, "move_mult": 0.0},
+  {"type": "status", "id": "grappling", "name": "holding someone", "defense_mod": -2}
 ]

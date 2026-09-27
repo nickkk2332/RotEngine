@@ -60,6 +60,9 @@ def build_world(scenario: dict, content: Content) -> World:
 def build(scenario: dict, content: Content, seed: int | None = None,
           echo: Callable[[str], None] | None = None) -> Sim:
     sim = Sim(content, build_world(scenario, content), seed, echo)
+    # "start_alert": false makes a stealth scenario: nobody knows anyone is there.
+    sim.start_aware = scenario.get("start_alert", True)
+    sim.ambient_light = scenario.get("ambient_light", 1.0)
     groups = [(team, g) for team, gs in scenario["teams"].items() for g in gs]
     base_names = [g.get("name") or content.get("creature", g["creature"])["name"] for _, g in groups]
     totals = Counter(n for (_, g), n in zip(groups, base_names) for _ in range(g.get("count", 1)))
@@ -79,11 +82,16 @@ def build(scenario: dict, content: Content, seed: int | None = None,
                 pos = _free_spot(sim, g["area"])
             numbered[base] += 1
             name = f"{base} {numbered[base]}" if totals[base] > 1 else base
-            sim.spawn(g["creature"], team, pos, name)
+            c = sim.spawn(g["creature"], team, pos, name)
+            if g.get("patrol"):
+                c.patrol = [tuple(p) for p in g["patrol"]]
+                c.patrol_i = (numbered[base] - 1) * max(1, len(c.patrol) // g.get("count", 1))
+            if g.get("facing"):
+                c.facing = c.post_facing = tuple(g["facing"])
     from .combat import face
-    for c in sim.creatures:  # everyone starts facing the nearest enemy
+    for c in sim.creatures:  # arena fights: everyone starts facing the nearest enemy
         foes = [o for o in sim.creatures if o.team != c.team]
-        if foes:
+        if foes and sim.start_aware and not c.post_facing:
             face(c, min(foes, key=lambda o: sim.distance(c, o)).pos)
     return sim
 

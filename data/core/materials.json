@@ -17,5 +17,6 @@
   {"type": "material", "id": "dirt", "name": "dirt", "glyph": "%", "floor_glyph": ",",
    "solid": true, "hp": 80, "dr": 8},
   {"type": "material", "id": "stairs", "name": "stairs", "glyph": "X",
-   "supports": true, "climbable": true, "hp": 40, "dr": 4}
+   "supports": true, "climbable": true, "hp": 40, "dr": 4},
+  {"type": "material", "id": "lamp", "name": "lamp post", "glyph": "*", "floor_glyph": ".", "solid": true, "transparent": true, "hp": 3, "dr": 0, "light": 7}
 ]

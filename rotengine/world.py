@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from functools import lru_cache
 from typing import Iterator
 
 import numpy as np
@@ -118,12 +119,16 @@ class World:
 
     # -- lines, sight and projectiles --------------------------------------
     @staticmethod
-    def line(a: Pos, b: Pos) -> list[Pos]:
-        """Voxels from a (exclusive) to b (inclusive)."""
-        d = [b[i] - a[i] for i in range(3)]
-        n = max(abs(v) for v in d)
-        return [tuple(int(math.floor(a[i] + d[i] * s / n + 0.5)) for i in range(3))
-                for s in range(1, n + 1)]
+    @lru_cache(maxsize=262_144)
+    def line(a: Pos, b: Pos) -> tuple[Pos, ...]:
+        """Voxels from a (exclusive) to b (inclusive). Cached: sight lines get
+        asked for over and over."""
+        ax, ay, az = a
+        dx, dy, dz = b[0] - ax, b[1] - ay, b[2] - az
+        n = max(abs(dx), abs(dy), abs(dz))
+        floor = math.floor
+        return tuple((int(floor(ax + dx * s / n + 0.5)), int(floor(ay + dy * s / n + 0.5)),
+                      int(floor(az + dz * s / n + 0.5))) for s in range(1, n + 1))
 
     def crossing(self, p: Pos, q: Pos) -> Pos | None:
         """The floor slab crossed moving p -> q, if the move changes z: the

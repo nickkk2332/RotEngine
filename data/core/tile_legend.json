@@ -13,6 +13,7 @@
     "H": {"fill": "steel", "floor": "concrete"},
     "=": {"fill": "glass", "floor": "concrete"},
     "X": {"fill": "stairs"},
-    "x": {"fill": "stairs", "floor": "concrete"}
+    "x": {"fill": "stairs", "floor": "concrete"},
+    "*": {"fill": "lamp", "floor": "concrete"}
   }
 }

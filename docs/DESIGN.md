@@ -229,6 +229,75 @@ items on the ground, thrown objects and bodies, fire, smoke, gas and liquids as 
 cellular automata, explosions with overpressure and fragments, light and noise maps
 for stealth.
 
+## 7½. Perception and stealth (`perception.py`)
+
+Scenarios with `"start_alert": false` start with nobody knowing anybody is there.
+Arena scenarios, and any sim built in code, start with everyone aware.
+
+**Awareness.** Every creature keeps a 0–100 meter per enemy. At the start of its turn
+it looks at each enemy in view (not behind it): a 3d6 **Perception** roll (WIS; −1
+calm, +1 searching, +2 in combat) against the enemy's **Stealth** (skill; −4 unless
+sneaking, −6 for 2 s after firing). Winning adds 25 + 20 per point of margin; a
+narrow loss is a glimpse (+10). At 30 the observer is suspicious and goes to look.
+At 100 it has spotted you: it knows where you are, shouts, and fights. Out of sight,
+the meter drains, and after 20 s unseen a spotted enemy drops back to "searching" at
+its last known position. The AI never uses positions it hasn't perceived.
+
+**Sight modifiers:**
+
+| | |
+|---|---|
+| distance | half the ranged penalty, +3 within 2 tiles, +1 within 5 |
+| light | bright +2, dim −2, dark −6, pitch black −10 (night vision adds 0.4 light) |
+| angle | side arc −4, rear arc can't see |
+| target | prone −2, moved in the last second +2, cover as for shooting |
+
+**Light.** Scenario `ambient_light` (0–1) plus materials with `"light": radius`
+(lamps), which light what they can see. Lamps are destructible: shoot them out. The
+light map is recomputed when terrain changes.
+
+**Noise.** Actions emit sounds with a range in tiles:
+
+| Sound | Range |
+|---|---|
+| sneaking / crawling | 1 |
+| footsteps | 4 |
+| melee | 5 |
+| a struggle | 4 |
+| suppressed shot | 7 |
+| scream | 12 |
+| crash (through a wall) | 12 |
+| breaking glass | 12 |
+| alarm shout | 16 |
+| collapse | 30 |
+| gunshot | 40 |
+
+Out of line of sight a sound carries half as far. Listeners roll Perception to hear
+it. Enemy noises raise suspicion and send them to look; an ally's shout of alarm
+tells them where the intruder is. The player gets "You hear gunfire to the
+north-east." Weapons set `"noise"`, powers set `"noise"`.
+
+**Bodies.** A guard who spots a downed or dead ally (a Perception roll, like spotting
+you) raises the alarm and goes to the body. So drag bodies into the dark.
+
+**Surprise.** You can't defend against an attacker you haven't noticed: an NPC needs
+awareness 100, a player needs to be able to make the attacker out. A knife from the
+dark gets no dodge or parry. This replaced blink's special case; it's now general.
+
+**Grappling.**
+
+| Action | Rules |
+|---|---|
+| Grab (`G`) | Wrestling roll; the target defends if they noticed you. A downed or dead body is simply taken hold of. |
+| While held | Can't move; −2 to attack, −3 to defend. |
+| Choke (`G` again) | Each second: CON roll at −2 per second choked, or go limp for 20–60 s (a timed knockout, no injury). The victim can't shout. Keep squeezing and it becomes hypoxia, then death ("strangled"). |
+| Struggle | Your max(ST, Wrestling) against their max(ST, Wrestling) + 2. −3 if taken from behind, −1 per second choked. |
+| Drag | The holder walks and the held body follows, at double the move cost. |
+| Let go (`L`) | |
+
+**The log** in play only shows what your character witnessed: lines are tagged with
+where they happened (`Sim.focus`), and sounds you heard arrive as private lines.
+
 ## 8. Modding reference
 
 ### Content types
@@ -287,11 +356,11 @@ def ignite(args, ctx): ...
    `Sim.player_act()`. The attack menu lists `combat.attack_plans()`, the same options
    the AI planner scores. Field of view (`rotengine/fov.py`) uses combat's line of
    sight. UI screens are plain objects (`render(console)`, `on_key(key)`), so the tests
-   drive them headlessly. Next for it: only log what the player can see (the log is
-   omniscient), a map editor, and saving arena setups.
-2. **Stealth and perception.** Facing, awareness states (unaware → suspicious → alert),
-   light and noise propagation over the voxel grid, and takedowns (the `surprise` path
-   already exists). Grappling, chokes and non-lethal options.
+   drive them headlessly. The log only shows what your character witnessed or heard.
+   Next for it: a map editor, and saving arena setups.
+2. **Stealth and perception (done).** See section 7½ above. Next for it: carrying
+   bodies over the shoulder, distraction (throwing things to make noise), light
+   switches, doors, disguises, and AI that sneaks and flanks.
 3. **More physics.** Items on the ground, throwing (including creatures: a Hulk throwing a
    soldier is `knockback` with a chosen direction), doors and breaching, fire/gas/fluids,
    explosives.

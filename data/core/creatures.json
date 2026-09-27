@@ -44,5 +44,9 @@
    "stats": {"ST": 11, "CON": 12, "DEX": 14, "INT": 11, "WIS": 11},
    "skills": {"knife": 14, "brawling": 14, "first_aid": 10},
    "traits": ["super_speed", "combat_reflexes"],
-   "equipment": {"wield": "knife", "wear": ["leather_jacket"]}}
+   "equipment": {"wield": "knife", "wear": ["leather_jacket"]}},
+  {"type": "creature", "id": "operative", "copy-from": "human", "name": "the operative", "glyph": "@", "stats": {"ST": 11, "CON": 12, "DEX": 14, "INT": 12, "WIS": 12}, "skills": {"stealth": 15, "knife": 14, "guns": 14, "wrestling": 14, "brawling": 12, "first_aid": 12}, "traits": ["night_vision", "combat_reflexes"], "equipment": {"wield": "knife", "carry": ["suppressed_pistol"], "wear": ["leather_jacket"]}},
+  {"type": "creature", "id": "sentry", "copy-from": "guard_gunner", "name": "sentry", "glyph": "g", "skills": {"guns": 12, "brawling": 11, "wrestling": 11, "first_aid": 10}},
+  {"type": "creature", "id": "watchman", "copy-from": "guard", "name": "watchman", "glyph": "g", "skills": {"sword": 12, "brawling": 11, "wrestling": 12, "first_aid": 10}},
+  {"type": "creature", "id": "sharp_sentry", "copy-from": "sentry", "name": "sharp-eyed sentry", "stats": {"ST": 11, "CON": 11, "DEX": 11, "INT": 10, "WIS": 12}, "traits": ["light_sleeper"]}
 ]

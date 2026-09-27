@@ -16,9 +16,10 @@ from __future__ import annotations
 import heapq
 import itertools
 import random
-from typing import Callable
+from contextlib import contextmanager
+from typing import Callable, Iterator
 
-from . import ai, combat, effects
+from . import actions, ai, combat, effects, perception
 from .content import Content
 from .creature import Creature, Item
 from .dice import Dice, check
@@ -38,7 +39,14 @@ class Sim:
         self.creatures: list[Creature] = []
         self.items: list[tuple[Pos, Item]] = []  # things lying on the ground
         self.lines: list[str] = []
+        # per line: (positions involved, uid it's private to or None). The UI
+        # shows the player only what happened where they could see it.
+        self.line_meta: list[tuple[tuple, int | None]] = []
+        self._focus: list[Pos] = []
         self.echo = echo
+        self.ambient_light = 1.0
+        self.start_aware = True  # new arrivals know where their enemies are (arena fights)
+        self._light: tuple[int, float, list] | None = None
         self.fighting = True  # False during the aftermath: nobody left to fight
         self._queue: list[tuple[int, int, int]] = []  # (time, seq, uid); uid -1 = world tick
         self._seq = itertools.count()
@@ -49,15 +57,36 @@ class Sim:
         heapq.heappush(self._queue, (TICK_MS, next(self._seq), -1))
 
     # -- bookkeeping -------------------------------------------------------
-    def log(self, msg: str) -> None:
+    def log(self, msg: str, private_to: int | None = None) -> None:
         line = f"[{self.time / 1000:6.2f}s] {msg}"
         self.lines.append(line)
-        if self.echo:
+        self.line_meta.append((tuple(self._focus), private_to))
+        if self.echo and private_to is None:
             self.echo(line)
+
+    @contextmanager
+    def focus(self, *positions: Pos) -> Iterator[None]:
+        """Tag log lines written inside this block with where they happen."""
+        self._focus.extend(positions)
+        try:
+            yield
+        finally:
+            del self._focus[len(self._focus) - len(positions):]
+
+    def light_map(self) -> list:
+        key = (self.world.version, self.ambient_light)
+        if self._light is None or self._light[:2] != key:
+            self._light = (*key, perception.compute_light(self.world, self.ambient_light))
+        return self._light[2]
 
     def spawn(self, template_id: str, team: str, pos: Pos, name: str | None = None) -> Creature:
         c = Creature(len(self._by_uid), self.content.get("creature", template_id), self.content,
                      team, pos, name)
+        if self.start_aware:
+            for o in self.creatures:
+                if o.team != c.team:
+                    c.awareness[o.uid] = perception.Awareness(perception.AWARE, o.pos, self.time)
+                    o.awareness[c.uid] = perception.Awareness(perception.AWARE, c.pos, self.time)
         self.creatures.append(c)
         self._by_uid[c.uid] = c
         self._schedule(c, self.time + int(self.rng.randint(0, 300) / c.tempo))
@@ -80,6 +109,9 @@ class Sim:
         for sid, until in list(c.statuses.items()):
             if until is not None and until <= self.time:
                 del c.statuses[sid]
+                if sid == "unconscious" and not c.dead:
+                    with self.focus(c.pos):
+                        self.log(f"{c.name} comes to.")
 
     def drop(self, pos: Pos, item: Item) -> None:
         self.items.append((pos, item))
@@ -166,6 +198,7 @@ class Sim:
             return
         c.pos = (x, y, z)
         self.log(f"{c.name} falls {levels} storey{'s' if levels > 1 else ''}!")
+        perception.emit_noise(self, None, c.pos, "thud")
         dmg = Dice(2 * min(levels, 10), 6).roll(self.rng)
         under = next((o for o in self.creatures if o is not c and not o.dead and o.pos == c.pos), None)
         if under is not None:  # landing on someone: they break the fall, painfully
@@ -204,6 +237,7 @@ class Sim:
         collapsed = self.world.settle()
         if collapsed:
             self.log(f"The structure gives way: {len(collapsed)} sections collapse!")
+            perception.emit_noise(self, None, collapsed[0][1], "collapse")
         for kind, (x, y, z) in collapsed:
             if kind != "floor":
                 continue
@@ -282,13 +316,15 @@ class Sim:
                 if c.dead or c.next_time != at:
                     continue
                 if stop_for_player and c.controller == "player":
-                    own_ms = self._pre_act(c)
+                    with self.focus(c.pos):
+                        own_ms = self._pre_act(c)
                     if own_ms is None:  # conscious and able: hand over to the player
                         heapq.heappush(self._queue, (at, seq, uid))
                         self.awaiting = c
                         return "player"
                 else:
-                    own_ms = self._act(c)
+                    with self.focus(c.pos):
+                        own_ms = self._act(c)
                 self._schedule(c, at + max(1, int(own_ms / c.tempo)))
             if self._terrain_dirty:
                 self._settle()
@@ -307,6 +343,8 @@ class Sim:
         and the stunned, the fading and the exhausted lose their turn.
         Returns the own-ms cost if the turn is used up, else None."""
         self.expire_statuses(c)
+        actions.check_grapple(self, c)
+        perception.perceive(self, c)
         if not c.can_act:
             ends = [t for sid, t in c.statuses.items()
                     if t is not None and self.content.get("status", sid).get("prevents_action")]
@@ -329,18 +367,23 @@ class Sim:
         for c in self.creatures:
             if c.dead:
                 continue
-            self.expire_statuses(c)
-            self._blood(c, second)
-            if c.dead:
-                continue
-            resting = not c.conscious or not self.fighting
-            c.stamina = min(c.max_stamina, c.stamina + (0.5 if resting else 0.1) * c.tempo)
-            if c.has_status("unconscious") and second % 5 == 0 and self._can_wake(c):
-                if check(self.rng, c.stat("CON")).success:
-                    del c.statuses["unconscious"]
-                    self.log(f"{c.name} comes to.")
-                    self.make_room(c)
-            self.fire_hooks(c, "on_second")
+            with self.focus(c.pos):
+                self._tick_one(c, second)
+
+    def _tick_one(self, c: Creature, second: int) -> None:
+        self.expire_statuses(c)
+        perception.decay(self, c)
+        self._blood(c, second)
+        if c.dead:
+            return
+        resting = not c.conscious or not self.fighting
+        c.stamina = min(c.max_stamina, c.stamina + (0.5 if resting else 0.1) * c.tempo)
+        if (c.statuses.get("unconscious", 0) is None and second % 5 == 0 and self._can_wake(c)
+                and check(self.rng, c.stat("CON")).success):
+            del c.statuses["unconscious"]  # (timed knockouts, like a choke, wear off by themselves)
+            self.log(f"{c.name} comes to.")
+            self.make_room(c)
+        self.fire_hooks(c, "on_second")
 
     def _blood(self, c: Creature, second: int) -> None:
         b = c.body

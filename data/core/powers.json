@@ -1,7 +1,7 @@
 [
   {"type": "power", "id": "thunderclap", "name": "thunderclap",
    "description": "Claps hard enough to make a shockwave. Staggers everyone near and tears up the room.",
-   "cost": {"stamina": 3}, "time_ms": 1000,
+   "cost": {"stamina": 3}, "time_ms": 1000, "noise": "collapse",
    "ai_condition": {"compare": [{"count_enemies": {"radius": 3}}, ">=", 2]},
    "effects": [
      {"message": "{self} brings his hands together. BOOM."},
@@ -15,7 +15,7 @@
    ]},
   {"type": "power", "id": "blink", "name": "blink",
    "description": "Short-range teleport to a target in sight, arriving behind them with a blade already moving: an all-out attack they never see coming.",
-   "cost": {"stamina": 2}, "time_ms": 400,
+   "cost": {"stamina": 2}, "time_ms": 400, "noise": "sneak",
    "ai_condition": {"and": [{"has_target": true}, {"sees_target": true},
                             {"compare": [{"distance_to_target": {}}, "<=", 14]},
                             {"or": [{"compare": [{"distance_to_target": {}}, ">=", 3]},

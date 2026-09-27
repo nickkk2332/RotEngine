@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from . import effects
+from . import effects, perception
 from .body import Injury
 from .dice import Dice, check, p_success
 
@@ -120,7 +120,7 @@ def cover(sim: "Sim", shooter: "Pos", target: "Creature") -> tuple[int, "Pos | N
 def defense_against(sim: "Sim", attacker: "Creature", target: "Creature", kind: str,
                     surprise: bool = False) -> tuple[str, int] | None:
     """The target's defense roll target, or None if it can't defend at all."""
-    if surprise or not target.conscious:
+    if surprise or not target.conscious or not _noticed(sim, target, attacker):
         return None
     sim.expire_statuses(target)
     side = arc(target, attacker.pos)
@@ -141,11 +141,22 @@ def defense_against(sim: "Sim", attacker: "Creature", target: "Creature", kind: 
     return name, value
 
 
-def _spend_defense(sim: "Sim", target: "Creature") -> None:
+def _noticed(sim: "Sim", target: "Creature", attacker: "Creature") -> bool:
+    """You can only defend against someone you know is there. NPCs track that
+    with awareness; a player notices whatever they can make out."""
+    if target.controller == "player":
+        return perception.can_make_out(sim, target, attacker)
+    return perception.aware_of(target, attacker)
+
+
+def spend_defense(sim: "Sim", target: "Creature") -> None:
     if sim.time >= target.defense_until:
         target.defenses_in_window = 0
         target.defense_until = sim.time + int(REACTION_MS / target.tempo)
     target.defenses_in_window += 1
+
+
+_spend_defense = spend_defense  # old name
 
 
 # -- planning ------------------------------------------------------------------
@@ -283,6 +294,16 @@ def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: A
 
     time_ms = int(attack.get("time_ms", 1000) * speed_mult)
     attacker.exert(attack.get("fatigue", 0.05 if ranged else 0.3))
+    with sim.focus(attacker.pos, target.pos):
+        took = _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_ms)
+    attacker.noisy_until = sim.time + 2000
+    noise = attack.get("noise", "gunshot" if ranged else "melee")
+    perception.emit_noise(sim, attacker, attacker.pos, noise)
+    perception.notice_attacker(sim, target, attacker)
+    return took
+
+
+def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_ms) -> int:
     shots = attack.get("rof", 1)
     if item is not None and item.ammo is not None:
         shots = min(shots, item.ammo)
@@ -311,7 +332,7 @@ def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: A
     defense = None if roll.critical else defense_against(sim, attacker, target, attack["kind"], surprise)
     if defense is not None:
         name, value = defense
-        _spend_defense(sim, target)
+        spend_defense(sim, target)
         d = check(sim.rng, value - plan.deceptive)
         if d.success:
             blocked = min(hits, max(1, 1 + d.margin))
@@ -324,7 +345,7 @@ def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: A
                 return time_ms
     tag = " (critical!)" if roll.critical else " (unaware!)" if surprise else ""
     if not surprise and defense is None and not roll.critical and target.conscious:
-        tag = " (from behind!)"
+        tag = " (never saw it coming!)" if not _noticed(sim, target, attacker) else " (from behind!)"
     sim.log(f"{attacker.name} {verb} {target.name}{where}{tag}" + (f" - {hits} hits" if hits > 1 else "") + ".")
 
     cover_dr = 0
@@ -337,6 +358,7 @@ def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: A
             if broke:
                 sim.log(f"The {mat['name']} shatters!")
                 sim.terrain_changed()
+                perception.emit_noise(sim, None, pos, "glass")
     for _ in range(hits):
         raw = max(1, plan.dice.roll(sim.rng) - cover_dr)
         loc = plan.location if plan.location and not target.body.part(plan.location).destroyed else None
@@ -438,6 +460,9 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
         target.shock = min(4, target.shock + shock)
         target.aim_target = None
         _after_injury(sim, target, inj, prev_hp)
+        if (target.conscious and inj.injury >= target.max_hp / 3 and target.grappled_by is None
+                and not target.has_trait("high_pain_threshold")):
+            perception.emit_noise(sim, target, target.pos, "scream")
         if not target.dead:
             sim.fire_hooks(target, "on_damaged", source, {"damage": inj.injury})
         if source is not None and not source.dead and target.dead:
@@ -546,6 +571,7 @@ def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int) -> None
             slam = Dice(remaining, 6).roll(sim.rng)
             broke = world.damage_fill(nxt, slam * 2)
             sim.log(f"  {target.name} {'smashes through' if broke else 'slams into'} the {mat['name']}!")
+            perception.emit_noise(sim, None, nxt, "crash")
             deal_damage(sim, target, slam, "crush", knockback_ok=False)
             if not broke:
                 break
@@ -579,6 +605,8 @@ def use_power(sim: "Sim", c: "Creature", power: dict, target: "Creature | None")
     couple of seconds, so the AI doesn't burn itself out retrying."""
     c.stamina -= power.get("cost", {}).get("stamina", 0)
     sim.log(f"{c.name} uses {power.get('name', power['id'])}!")
+    if power.get("noise"):
+        perception.emit_noise(sim, c, c.pos, power["noise"])
     ctx = effects.Ctx(sim, c, target)
     effects.run(power["effects"], ctx)
     cooldown = power.get("cooldown_ms", 0)

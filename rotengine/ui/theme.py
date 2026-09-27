@@ -23,6 +23,10 @@ PANEL_BG = (18, 18, 24)
 TARGET_BG = (90, 30, 30)
 CURSOR_BG = (50, 60, 130)
 SELECT_BG = (45, 45, 80)
+SUSPICIOUS_BG = (110, 85, 10)
+SPOTTED_BG = (130, 20, 20)
+CONE_FRONT_BG = (55, 45, 12)
+CONE_SIDE_BG = (30, 26, 10)
 
 MATERIAL_FG = {
     "concrete": (150, 150, 150), "brick": (180, 95, 65), "drywall": (205, 200, 180),

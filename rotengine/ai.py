@@ -11,7 +11,7 @@ from __future__ import annotations
 import heapq
 from typing import TYPE_CHECKING, Callable
 
-from . import actions, combat, effects
+from . import actions, combat, effects, perception
 
 if TYPE_CHECKING:
     from .creature import Creature
@@ -23,26 +23,33 @@ STUCK_WAIT_MS = 2000
 AIM_HOLD_MS = 300
 MAX_AIM_HOLDS = 4
 FAILED_PATH_MEMORY_MS = 2000
+IDLE_MS = 1500
+LOOK_MS = 1000
 
 
 def take_turn(sim: "Sim", c: "Creature") -> int:
-    enemies = sim.enemies_of(c)
-    visible = [e for e in enemies if sim.world.has_los(c.pos, e.pos)]
-    if c.has_status("prone") and not _good_firing_position(sim, c, enemies, visible):
+    if c.grappled_by is not None:
+        return actions.struggle(sim, c)
+    if c.grappling is not None:
+        actions.release(sim, c)  # NPCs don't keep people in holds (yet)
+    known = [e for e in sim.enemies_of(c) if perception.aware_of(c, e)]
+    visible = [e for e in known if sim.world.has_los(c.pos, e.pos)]
+    if c.has_status("prone") and not _good_firing_position(sim, c, known, visible):
         cost = actions.stand_up(sim, c)
         if cost is not None:
             return cost
     if not visible:
-        aid = _first_aid(sim, c, allies=not enemies)
+        aid = _first_aid(sim, c, allies=not known)
         if aid is not None:
             return aid
-    if not enemies:
-        return 1000
-    target = _choose_target(sim, c, enemies, visible)
+    if not known:
+        return _calm_turn(sim, c)
+    target = _choose_target(sim, c, known, visible)
     if c.target is not target:
         c.aim_target = None
     c.target = target
-    combat.face(c, target.pos)
+    goal = _believed_pos(c, target, visible)
+    combat.face(c, goal)
 
     for power in c.powers:
         if actions.power_blocked(sim, c, power):
@@ -59,38 +66,96 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
         if cost is not None:
             return cost
 
-    plan = combat.best_attack_plan(sim, c, target)
-    if plan is not None and plan.value > 0:
-        c.aim_holds = 0
-        return actions.attack(sim, c, target, plan)
+    if target in visible:
+        plan = combat.best_attack_plan(sim, c, target)
+        if plan is not None and plan.value > 0:
+            c.aim_holds = 0
+            return actions.attack(sim, c, target, plan)
 
-    # Lined up a shot and a teammate stepped into it: keep the aim and give
-    # them a moment to clear rather than walking off and starting over.
-    if (c.aim_target == target.uid and target in visible and c.aim_holds < MAX_AIM_HOLDS
-            and combat.friendly_in_line(sim, c, target)):
-        c.aim_holds += 1
-        return AIM_HOLD_MS
+        # Lined up a shot and a teammate stepped into it: keep the aim and give
+        # them a moment to clear rather than walking off and starting over.
+        if (c.aim_target == target.uid and c.aim_holds < MAX_AIM_HOLDS
+                and combat.friendly_in_line(sim, c, target)):
+            c.aim_holds += 1
+            return AIM_HOLD_MS
+    elif sim.distance_pos(c.pos, goal) <= 1:
+        # Got to where they were last seen, and they're gone.
+        aw = perception.awareness(c, target)
+        aw.level = perception.SUSPICIOUS + 20
+        c.investigate, c.search_turns = goal, 4
+        return _look_around(sim, c)
 
     # Can't hurt the target from here. Shooters look for a firing position;
     # everyone else closes in on whoever they can reach. Failing both, just get
     # eyes on the target (a leap or a better angle may open up from there).
     step = None
-    sees = lambda p: sim.world.has_los(p, target.pos)  # noqa: E731
+    sees = lambda p: sim.world.has_los(p, goal)  # noqa: E731
     shooter = _has_usable_ranged(c)
     if shooter:
-        step = _step_toward(sim, c, target.pos, sees, kind="los")
+        step = _step_toward(sim, c, goal, sees, kind="los")
     if step is None:
-        for goal in [target] + sorted((e for e in enemies if e is not target),
-                                      key=lambda e: (sim.distance(c, e), e.uid)):
-            step = _step_toward(sim, c, goal.pos)
+        others = sorted((e for e in known if e is not target), key=lambda e: (sim.distance(c, e), e.uid))
+        for e in [target] + others:
+            step = _step_toward(sim, c, _believed_pos(c, e, visible))
             if step is not None:
-                c.target = goal
+                c.target = e
                 break
     if step is None and not shooter and c.powers:
-        step = _step_toward(sim, c, target.pos, sees, kind="los")  # a leap may open up from there
+        step = _step_toward(sim, c, goal, sees, kind="los")  # a leap may open up from there
     if step is None:
         return STUCK_WAIT_MS  # nothing reachable: hold position and re-think later
     return actions.step(sim, c, step) or STUCK_WAIT_MS
+
+
+def _believed_pos(c: "Creature", e: "Creature", visible: list["Creature"]) -> "Pos":
+    """Where c thinks e is: where it is if c can see it, else last seen."""
+    if e in visible:
+        return e.pos
+    aw = c.awareness.get(e.uid)
+    return aw.last_pos if aw is not None and aw.last_pos is not None else e.pos
+
+
+def _calm_turn(sim: "Sim", c: "Creature") -> int:
+    """Nobody to fight that c knows of: check out anything suspicious, walk
+    the patrol, or stand watch."""
+    if c.investigate is not None:
+        spot = c.investigate
+        if sim.distance_pos(c.pos, spot) <= 1:
+            c.search_turns -= 1
+            if c.search_turns <= 0:
+                c.investigate = None
+            return _look_around(sim, c)
+        step = _step_toward(sim, c, spot, lambda p: sim.distance_pos(p, spot) <= 1, kind="investigate")
+        if step is not None:
+            return actions.step(sim, c, step) or IDLE_MS
+        c.investigate = None
+        return IDLE_MS
+    if c.patrol:
+        wp = tuple(c.patrol[c.patrol_i % len(c.patrol)])
+        if c.pos == wp:
+            c.patrol_i += 1
+            return _look_around(sim, c) if sim.rng.random() < 0.3 else 300
+        step = _step_toward(sim, c, wp, lambda p: p == wp, kind="patrol")
+        if step is not None:
+            return actions.step(sim, c, step) or IDLE_MS
+        c.patrol_i += 1
+        return IDLE_MS
+    if c.pos != c.post:
+        step = _step_toward(sim, c, c.post, lambda p: p == c.post, kind="post")
+        if step is not None:
+            return actions.step(sim, c, step) or IDLE_MS
+    if c.alarmed or sim.rng.random() < 0.25:
+        return _look_around(sim, c)
+    if c.post_facing:
+        c.facing = c.post_facing
+    return IDLE_MS
+
+
+def _look_around(sim: "Sim", c: "Creature") -> int:
+    ring = combat._RING
+    i = ring.index(c.facing)
+    c.facing = ring[(i + sim.rng.choice((-2, -1, 1, 2, 4))) % 8]
+    return LOOK_MS
 
 
 def _good_firing_position(sim: "Sim", c: "Creature", enemies: list["Creature"],

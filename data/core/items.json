@@ -44,5 +44,6 @@
    "armor": {"covers": ["torso", "vitals", "groin", "r_arm", "l_arm", "r_leg", "l_leg"],
              "dr": {"pierce": 8, "large_pierce": 8, "cut": 6, "*": 2}}},
   {"type": "item", "id": "leather_jacket", "name": "leather jacket", "glyph": "[",
-   "armor": {"covers": ["torso", "vitals", "r_arm", "l_arm"], "dr": {"cut": 2, "*": 1}}}
+   "armor": {"covers": ["torso", "vitals", "r_arm", "l_arm"], "dr": {"cut": 2, "*": 1}}},
+  {"type": "item", "id": "suppressed_pistol", "copy-from": "pistol", "name": "suppressed pistol", "attacks": [{"id": "shoot", "name": "shoot", "verb": "shoots", "kind": "ranged", "skill": "guns", "damage": {"dice": "2d6+1", "type": "pierce"}, "acc": 2, "rof": 2, "recoil": 2, "range": 100, "time_ms": 1000, "noise": "suppressed"}]}
 ]
