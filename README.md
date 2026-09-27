@@ -78,7 +78,7 @@ python -m pytest
 | Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~52%; loses to simultaneous bursts |
 | Blink assassin vs 6 guards, 2 with pistols | Assassin wins ~5-9%, usually after several kills. Deliberately hard in an open fight |
 | Night infiltration: the operative vs 6 guards who don't know you're there | For playing: keep to the shadows, choke them out, hide the bodies |
-| Breach and clear: 4 SWAT (grenades, flashbangs, smoke, charges) vs 6 barricaded occupants (Molotovs) | SWAT wins ~90%, usually losing people to shotguns and their own grenades |
+| Breach and clear: 4 SWAT (grenades, flashbangs, smoke, charges) vs 6 barricaded occupants (Molotovs) | SWAT wins ~95%, usually losing people to shotguns and their own grenades |
 
 Map glyphs: creatures by their template glyph, `&` someone down (unconscious), `%` a
 corpse, dropped weapons by their item glyph. Terrain: `#` concrete/brick, `|` drywall,
