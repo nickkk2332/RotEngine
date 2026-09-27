@@ -164,12 +164,12 @@ class World:
             return None
         return (q[0], q[1], max(p[2], q[2]))
 
-    def obstacles(self, a: Pos, b: Pos) -> list[tuple[str, Pos]] | None:
+    def obstacles(self, a: Pos, b: Pos, fog: bool = True) -> list[tuple[str, Pos]] | None:
         """Solid-but-see-through things between a and b (glass, grates, glass
         floors), or None if something opaque is in the way."""
         found: list[tuple[str, Pos]] = []
         prev = a
-        fog, haze = self.fog, 0.0
+        fog, haze = (self.fog if fog else None), 0.0
         for p in self.line(a, b):
             slab = self.crossing(prev, p)
             if slab is not None:
@@ -206,8 +206,9 @@ class World:
                 return p
         return None
 
-    def has_los(self, a: Pos, b: Pos) -> bool:
-        return self.obstacles(a, b) is not None
+    def has_los(self, a: Pos, b: Pos, fog: bool = True) -> bool:
+        """Line of sight. fog=False ignores smoke (flames glow through it)."""
+        return self.obstacles(a, b, fog) is not None
 
     # -- destruction -------------------------------------------------------
     def damage_fill(self, pos: Pos, amount: int) -> bool:

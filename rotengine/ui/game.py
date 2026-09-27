@@ -152,7 +152,9 @@ class GameScreen(Screen):
     def _update_fov(self) -> None:
         if self.player.dead:
             return
-        self.visible = fov.visible_from(self.sim.world, self.player.pos)
+        fire = self.sim.fields.fire
+        glowing = [(int(x), int(y), int(z)) for z, y, x in zip(*(fire > 1).nonzero())] if fire.any() else ()
+        self.visible = fov.visible_from(self.sim.world, self.player.pos, glowing=glowing)
         for pos in self.visible:
             self.seen[pos] = self._tile(pos)
         self.view_z = self.player.pos[2]

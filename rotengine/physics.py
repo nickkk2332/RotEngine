@@ -119,7 +119,7 @@ class Fields:
             if floor_f[z, y, x] > 0 and w.damage_floor(pos, int(heat // 2) + (w.floor_mat(pos) or {}).get("dr", 0)):
                 sim.terrain_changed()
             # smoke rises from it
-            self.add_gas("smoke", pos, heat * 1.5)
+            self.add_gas("smoke", pos, heat * 0.6)
             if heat < 3:
                 continue
             for dz, dy, dx in ((0, 0, 1), (0, 0, -1), (0, 1, 0), (0, -1, 0), (1, 0, 0),

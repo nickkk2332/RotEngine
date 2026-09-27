@@ -13,7 +13,8 @@ if TYPE_CHECKING:
     from .world import Pos, World
 
 
-def visible_from(world: "World", eye: "Pos", radius: int = 60) -> set["Pos"]:
+def visible_from(world: "World", eye: "Pos", radius: int = 60, glowing=()) -> set["Pos"]:
+    """glowing: positions bright enough to see through smoke (flames)."""
     ex, ey, ez = eye
     seen = {eye}
     for z in range(world.depth):
@@ -33,4 +34,7 @@ def visible_from(world: "World", eye: "Pos", radius: int = 60) -> set["Pos"]:
                 q = (x + dx, y + dy, z)
                 if q not in seen and world.in_bounds(q) and world.fill_mat(q).get("solid"):
                     walls.add(q)
+    for p in glowing:
+        if p not in seen and world.has_los(eye, p, fog=False):
+            seen.add(p)
     return seen | walls
