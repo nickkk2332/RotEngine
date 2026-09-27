@@ -292,3 +292,32 @@ def test_direction_commands_and_hazards_render():
     g.sim.fields.add_gas("smoke", (3, 2, 0), 80)
     g._update_fov()
     screen_text(app)
+
+
+def test_hold_menu_shows_moves_and_odds():
+    from rotengine.ui.game import GameScreen
+    scenario = {"id": "yard", "name": "Yard", "start_alert": False,
+                "levels": [["," * 20] * 5],
+                "teams": {"you": [{"creature": "hulk", "at": [4, 2, 0]}],
+                          "them": [{"creature": "sentry", "at": [5, 2, 0], "facing": [1, 0]},
+                                   {"creature": "sentry", "at": [18, 4, 0], "name": "far sentry"}]}}
+    app = new_app()
+    content = app.content_for(scenario)
+    sim = arena.build(scenario, content, seed=1)
+    app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 1)
+    p, guard = g.player, sim.creatures[1]
+    for _ in range(10):
+        if p.grappling is guard:
+            break
+        app.handle_key("G")
+    assert p.grappling is guard
+    app.handle_key("G")
+    text = screen_text(app)
+    assert g.mode == "grapple" and "Holding sentry" in text
+    assert "tear off the right arm" in text and "comes right off" in text
+    options = [o[0] for o in g._grapple_options()]
+    app.handle_key(chr(ord("a") + options.index("tear off the right arm")))
+    assert guard.body.part("r_arm").destroyed
+    assert p.wielded is not None and "right arm" in p.wielded.name
+    app.handle_key("esc")
+    assert g.mode == "play"

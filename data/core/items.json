@@ -52,5 +52,21 @@
   {"type": "item", "id": "smoke_grenade", "name": "smoke grenade", "glyph": "\u2022", "weight": 1, "throwable": {"fuse_ms": 1500}, "explosive": {"gas": {"id": "smoke", "amount": 90, "radius": 2}, "noise": "thud"}},
   {"type": "item", "id": "tear_gas_grenade", "name": "tear gas grenade", "glyph": "\u2022", "weight": 1, "throwable": {"fuse_ms": 1500}, "explosive": {"gas": {"id": "tear_gas", "amount": 80, "radius": 2}, "noise": "thud"}},
   {"type": "item", "id": "molotov", "name": "Molotov cocktail", "glyph": "!", "weight": 2, "throwable": {"fuse_ms": 0}, "explosive": {"fire": {"radius": 1, "intensity": 7}, "noise": "glass"}},
-  {"type": "item", "id": "breaching_charge", "name": "breaching charge", "glyph": "=", "weight": 2, "plantable": true, "fuse_ms": 5000, "explosive": {"damage": "4d6", "radius": 1, "terrain": "20d6", "noise": "explosion"}}
+  {"type": "item", "id": "breaching_charge", "name": "breaching charge", "glyph": "=", "weight": 2, "plantable": true, "fuse_ms": 5000, "explosive": {"damage": "4d6", "radius": 1, "terrain": "20d6", "noise": "explosion"}},
+  {"type": "item", "id": "severed_arm", "name": "severed arm", "glyph": "~", "weight": 4, "gore": true,
+   "description": "Someone's arm. Swings like a club, throws like one too.",
+   "attacks": [{"id": "club", "name": "club", "verb": "bludgeons", "kind": "melee", "skill": "clubs",
+                "damage": {"st": "swing", "add": 0, "type": "crush"}, "parry": -2, "time_ms": 1200, "fatigue": 0.3}],
+   "throwable": {}, "thrown": {"st": "thrust", "add": 0, "type": "crush"}},
+  {"type": "item", "id": "severed_leg", "name": "severed leg", "glyph": "~", "weight": 10, "gore": true,
+   "two_handed": true,
+   "attacks": [{"id": "club", "name": "club", "verb": "bludgeons", "kind": "melee", "skill": "clubs",
+                "damage": {"st": "swing", "add": 1, "type": "crush"}, "parry": -2, "time_ms": 1500, "fatigue": 0.5}],
+   "throwable": {}, "thrown": {"st": "thrust", "add": 1, "type": "crush"}},
+  {"type": "item", "id": "severed_head", "name": "severed head", "glyph": "o", "weight": 5, "gore": true,
+   "throwable": {}, "thrown": {"st": "thrust", "add": 0, "type": "crush"}},
+  {"type": "item", "id": "severed_hand", "name": "severed hand", "glyph": "~", "weight": 1, "gore": true,
+   "throwable": {}, "thrown": {"st": "thrust", "add": -3, "type": "crush"}},
+  {"type": "item", "id": "severed_foot", "name": "severed foot", "glyph": "~", "weight": 1, "gore": true,
+   "throwable": {}, "thrown": {"st": "thrust", "add": -2, "type": "crush"}}
 ]

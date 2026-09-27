@@ -149,7 +149,12 @@ apart (−5×HP). Otherwise death comes from one of three things:
   is crippled.
 * **Destruction:** cutting or crushing takes off limbs at `destroy_at`, along with their
   hands or feet, and severed limbs bleed arterially. Parts marked `organ`
-  (skull/brain, neck, vitals) can be destroyed by any damage type.
+  (skull/brain, neck, vitals) can be destroyed by any damage type. Severed arms, legs,
+  hands, feet and heads land on the floor as items (see Grappling in 7½).
+* **Per-type overrides:** a part's `by_type` block changes its texts and effects for one
+  damage type: a wrenched neck is "neck snapped" with the `broken_neck` status, and a
+  cut one ends in "decapitated". A part is wrenchable in a hold if it has a `by_type`
+  entry for `wrench`.
 * **Bleeding:** external bleeding is `injury/HP × type bleed × part bleed_mult`, in % of
   blood per second. Cuts and stabs bleed most, blunt force barely at all. Each 10 s a CON
   roll halves it (at −4 for arterial bleeds over 1%/s). First aid takes 5 s and reduces
@@ -289,11 +294,51 @@ dark gets no dodge or parry. This replaced blink's special case; it's now genera
 | Action | Rules |
 |---|---|
 | Grab (`G`) | Wrestling roll; the target defends if they noticed you. A downed or dead body is simply taken hold of. |
-| While held | Can't move; −2 to attack, −3 to defend. |
-| Choke (`G` again) | Each second: CON roll at −2 per second choked, or go limp for 20–60 s (a timed knockout, no injury). The victim can't shout. Keep squeezing and it becomes hypoxia, then death ("strangled"). |
-| Struggle | Your max(ST, Wrestling) against their max(ST, Wrestling) + 2. −3 if taken from behind, −1 per second choked. |
+| While held | Can't move; −2 to attack, −3 to defend. `G` again opens the hold menu, which shows the odds for each move. |
+| Choke | Each second: CON roll at −2 per second choked, or go limp for 20–60 s (a timed knockout, no injury). The victim can't shout. Keep squeezing and it becomes hypoxia, then death ("strangled"). |
+| Take down | Contest (below). They're slammed prone (thrust damage from the floor) and stay held; pinned, they struggle at −2. |
+| Disarm | Contest, resisted by their ST or weapon skill. The weapon drops. |
+| Wrench a part | Contest. Joint lock / limb break / neck snap: `wrench` damage (swing from ST, +1 per 2 Wrestling above 12) to that part. See below. |
+| Struggle | Your max(ST, Wrestling) against their max(ST, Wrestling) + 2. −3 if taken from behind, −1 per second choked, −2 if pinned. |
 | Drag | The holder walks and the held body follows, at double the move cost. |
-| Let go (`L`) | |
+| Hurl (`T`) / let go (`L`) | Hurl throws them like knockback: `(ST − 2 × their ST) / 4` tiles. |
+
+**The hold contest** (take down, disarm, wrench): your max(ST, Wrestling) + 2 for the
+leverage (+3 more from behind) against their max(ST, Wrestling), minus the usual
+penalties and 1 per second they've been choked. Someone unconscious doesn't resist.
+
+**Wrenching, snapping and tearing.** `wrench` is a JSON damage type with three
+properties: it fractures, it `ignores_armor` (a vest doesn't stop an arm lock, though
+natural toughness does, so nobody wrenches the Hulk), and it's `sudden`, meaning a part
+only comes off if a single pull does its whole `destroy_at` in one go. Joints resist
+with their own DR (`dr.wrench`: neck 5, knee 3, elbow 2, wrist and ankle 1), and the
+neck takes ×2. What that works out to:
+
+| Who | Arm | Neck |
+|---|---|---|
+| Average guard (ST 11) | breaks in ~3 tries | ~13 tries on someone out cold |
+| Trained operative (ST 11, Wrestling 14) | breaks in ~2 | ~6 on someone out cold: a faster silent kill than strangling |
+| ST 20 | 1–2 | ~2: snapped |
+| ST 26 | tears off ~60% of the time | snapped in one |
+| The Hulk (ST 60) | comes right off | the head comes off |
+
+A **snapped neck** (fracture) applies the `broken_neck` status: paralysed, not
+breathing, unconscious, and dead of hypoxia in about 3½ minutes ("broken neck"). A
+destroyed neck is instant. Cranking a human arm again and again breaks it; it never
+tears it off.
+
+**Severed parts are items.** A part with `sever_item` leaves one behind when it comes
+off, by any means: a sword takes an arm off, a blast takes a leg, a strong hold
+takes a head. It is named after its owner ("soldier 3's head"). If the tearer has a
+free hand they keep hold of it. An arm is a club (`clubs`, swing crush, parry −2), a
+leg a two-handed one, and all of them can be thrown (`t`), with thrown damage from ST.
+Anyone can pick them up (`g`); ordinary NPCs don't pick up body parts to fight with.
+
+**Brutes.** A creature template with a `"grapple"` block (`chance` to grab someone in
+reach instead of hitting them; `tear`, the chance to go for an arm rather than the
+neck) fights like the Hulk: it grabs a soldier, tears an arm off, beats the next
+soldier with it or throws it at one out of reach, and twists heads off. Everyone else
+lets go of holds.
 
 **The log** in play only shows what your character witnessed: lines are tagged with
 where they happened (`Sim.focus`), and sounds you heard arrive as private lines.
@@ -454,7 +499,8 @@ PyO3) behind the same API.
   crippled ones. It has no seeking cover, retreat, suppression or morale yet
   (WIS will drive morale).
 * Floors can span any distance from a support. Span limits are needed for realistic collapse.
-* Dropped weapons lie on the ground (`sim.items`) but nobody picks them up yet.
+* NPCs pick weapons back up, but only brutes pick fights with body parts; nobody reacts
+  to gore yet (it should hit morale when morale exists).
 * Surgery (the fix for internal bleeding) is only possible through effects so far.
 
 **Occupancy rules:** one living body per tile. Downed bodies block movement (walk
@@ -471,7 +517,11 @@ nothing reachable hold position.
 `dodge_bonus`, `parry_bonus`, `move_mult`, `tempo`, `momentum_exponent`,
 `action_time_mult`, `exertion_mult`, `pain_mult`, `pain_resist`, `knockdown_bonus`,
 `hooks`. Statuses also: `prevents_action`, `attack_mod`, `melee_attack_mod`,
-`ranged_attack_mod`, `ranged_target_mod`, `defense_mod`, `move_mult`, `subjective`.
+`ranged_attack_mod`, `ranged_target_mod`, `defense_mod`, `move_mult`, `subjective`,
+`hypoxia` (brain damage per second: can't breathe; no waking up), `knocks_out` (when
+applied by a fracture), `death_text`. Damage types: `wound_mult`, `bleed`, `knockback`,
+`dismembers`, `fractures`, `sudden`, `ignores_armor`. Items: `gore`, `throwable`,
+`thrown`. Creatures: `grapple` (brute AI).
 Timed statuses expire at their exact time, not on the next world tick. Powers also
 take `cooldown_ms`. A power whose effects abort (nowhere to land, out of range)
 "fizzles" and can't be retried for 2 s.

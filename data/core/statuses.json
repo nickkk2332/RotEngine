@@ -15,5 +15,8 @@
   {"type": "status", "id": "grappling", "name": "holding someone", "defense_mod": -2},
   {"type": "status", "id": "on_fire", "name": "on fire", "attack_mod": -3, "defense_mod": -2, "description": "Burning clothes: 1d burn a second until it goes out. Going prone may smother it."},
   {"type": "status", "id": "dazzled", "name": "dazzled", "subjective": true, "attack_mod": -4, "defense_mod": -2, "perception_mod": -6},
+  {"type": "status", "id": "broken_neck", "name": "broken neck",
+   "description": "Spinal cord severed high up: paralysed and not breathing. Brain death in a few minutes.",
+   "prevents_action": true, "knocks_out": true, "hypoxia": 0.5, "death_text": "broken neck"},
   {"type": "status", "id": "choking", "name": "choking", "attack_mod": -3, "defense_mod": -2, "perception_mod": -3}
 ]

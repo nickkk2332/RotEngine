@@ -157,6 +157,18 @@ class Content:
             for p in obj["parts"]:
                 if p.get("parent") and p["parent"] not in ids:
                     yield f"part '{p.get('id')}' has unknown parent '{p['parent']}'"
+                by_type = p.get("by_type", {})
+                if not isinstance(by_type, dict):
+                    yield f"part '{p.get('id')}': by_type must be an object of {{damage_type: overrides}}"
+                    continue
+                for dt, over in by_type.items():
+                    if not self.has("damage_type", dt):
+                        yield f"part '{p.get('id')}': by_type names unknown damage_type '{dt}'"
+                for spec in [p, *(o for o in by_type.values() if isinstance(o, dict))]:
+                    for field, ref_type in (("sever_item", "item"), ("fracture_status", "status"),
+                                            ("destroy_status", "status")):
+                        if spec.get(field) is not None and not self.has(ref_type, spec[field]):
+                            yield f"part '{p.get('id')}': {field} references unknown {ref_type} '{spec[field]}'"
 
 
 def _check_refs(content: Content, type_: str, obj: dict) -> Iterable[str]:

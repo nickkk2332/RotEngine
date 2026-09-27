@@ -6,5 +6,8 @@
   {"type": "damage_type", "id": "pierce", "name": "piercing", "wound_mult": 1.0, "bleed": 0.8},
   {"type": "damage_type", "id": "large_pierce", "name": "large piercing", "wound_mult": 1.5, "bleed": 1.0},
   {"type": "damage_type", "id": "impale", "name": "impaling", "wound_mult": 2.0, "bleed": 1.0},
-  {"type": "damage_type", "id": "burn", "name": "burning", "wound_mult": 1.0, "bleed": 0.0}
+  {"type": "damage_type", "id": "burn", "name": "burning", "wound_mult": 1.0, "bleed": 0.0},
+  {"type": "damage_type", "id": "wrench", "name": "wrenching", "wound_mult": 1.0, "bleed": 0.05,
+   "fractures": true, "dismembers": true, "sudden": true, "ignores_armor": true,
+   "//": "Joint locks and tearing, from a hold. 'sudden': a part only comes off in one pull big enough to do it (cranking a human arm breaks it, it doesn't remove it). 'ignores_armor': worn armor doesn't help; natural toughness does."}
 ]

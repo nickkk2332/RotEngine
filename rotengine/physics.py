@@ -341,7 +341,7 @@ def throw_item(sim: "Sim", c: "Creature", item: "Item", target: "Pos") -> "Pos":
     skill = c.skill("throwing") - c.action_penalty("ranged") + combat.range_penalty(dist)
     roll = check(sim.rng, skill)
     with sim.focus(c.pos, target):
-        sim.log(f"{c.name} throws the {item.name}{'' if roll.success else ' (a bad throw)'}.")
+        sim.log(f"{c.name} throws {item.the}{'' if roll.success else ' (a bad throw)'}.")
     land = target
     if not roll.success:
         scatter = min(4, 1 + (-roll.margin) // 3)
@@ -375,7 +375,7 @@ def throw_item(sim: "Sim", c: "Creature", item: "Item", target: "Pos") -> "Pos":
     if hit is not None and hit is not c and "thrown" in item.data:
         with sim.focus(land):
             dice = combat.attack_dice(c, {"damage": item.data["thrown"]})
-            sim.log(f"  The {item.name} hits {hit.name}.")
+            sim.log(f"  {item.the[0].upper()}{item.the[1:]} hits {hit.name}.")
             combat.deal_damage(sim, hit, dice.roll(sim.rng), item.data["thrown"]["type"], source=c)
     sim.drop(land, item)
     perception.emit_noise(sim, None, land, "thud")

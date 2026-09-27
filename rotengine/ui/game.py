@@ -35,7 +35,9 @@ HELP = [
     ("Tab", "cycle target"),
     (". or numpad 5", "wait half a second (of your time)"),
     ("s", "sneak on/off: slower, quieter, harder to spot"),
-    ("G", "grab someone next to you; again to choke (drag by moving)"),
+    ("G", "grab someone next to you; while holding them, G opens the hold menu:"),
+    ("", "  choke, take down, disarm, wrench a limb, snap the neck, tear it off"),
+    ("", "  (move to drag them; T to hurl them)"),
     ("L", "let go"),
     ("w", "swap to your other weapon"),
     ("t", "throw something (grenade, Molotov...) at a spot"),
@@ -45,7 +47,7 @@ HELP = [
     ("r", "reload"),
     ("m", "first aid (yourself, or a bleeding ally next to you)"),
     ("z", "drop prone / stand up"),
-    ("g", "pick up a weapon"),
+    ("g", "pick up: a live grenade first, else a weapon, else something to throw"),
     ("p", "use a power"),
     ("< >", "go up / down stairs"),
     ("[ ]", "look at the level below / above"),
@@ -231,14 +233,8 @@ class GameScreen(Screen):
             self.notice = "Sneaking: slow and quiet." if p.sneaking else "Walking normally."
             return None
         if key == "G":
-            held = p.grappling
-            if held is not None:
-                if held.dead:
-                    self.notice = "They're dead. Move to drag the body; L to let go."
-                    return None
-                self._do(actions.choke(sim, p))
-                if not held.dead and not held.conscious:
-                    self.notice = "They're out cold. Squeezing longer kills them; L to let go."
+            if p.grappling is not None:
+                self.mode = "grapple"
                 return None
             # enemies next to you, or anyone down (to drag them out of sight)
             near = [c for c in sim.creatures
@@ -341,8 +337,89 @@ class GameScreen(Screen):
         self._throwing = item
         t = self.target
         self.cursor = t.pos if t is not None and self._sees(t) else self.player.pos
-        self.notice = f"Throw the {item.name} where? (move the cursor, Enter to throw)"
+        self.notice = f"Throw {item.the} where? (move the cursor, Enter to throw)"
         return None
+
+    def _grapple_options(self) -> list[tuple[str, str, object]]:
+        """(label, odds/notes, action) for everything you can do to the
+        person you're holding."""
+        p, sim = self.player, self.sim
+        t = p.grappling
+        if t is None:
+            return []
+        out = []
+        if not t.dead:
+            label = "choke" if t.conscious else "keep squeezing"
+            note = f"{t.choked}s so far" if t.conscious else "this kills them"
+            out.append((label, note, lambda: actions.choke(sim, p)))
+        if t.conscious and not t.has_status("prone"):
+            out.append(("take down", "floor them (pinned: -2 to escape)",
+                        lambda: actions.takedown(sim, p)))
+        if t.wielded is not None:
+            out.append(("disarm", f"wrest away {t.wielded.the}", lambda: actions.disarm(sim, p)))
+        for part in actions.wrenchable(t):
+            avg, tries, p_tear = actions.wrench_odds(p, t, part)
+            neck = part.id == "neck"
+            if p_tear >= 0.5:
+                label = "twist the head off" if neck else f"tear off the {part.name}"
+            else:
+                label = "snap the neck" if neck else f"wrench the {part.name}"
+            notes = []
+            if avg == 0:
+                notes.append("won't budge")
+            elif part.fractured:
+                notes.append("already broken")
+            elif tries is not None:
+                notes.append(f"breaks in ~{tries}" if tries > 1 else "breaks it")
+            if p_tear >= 0.995:
+                notes = ["comes right off"]
+            elif p_tear > 0:
+                notes.append(f"{p_tear:.0%} to tear off")
+            out.append((label, ", ".join(notes), lambda part=part: actions.wrench(sim, p, part.id)))
+        return out
+
+    def _key_grapple(self, key: str):
+        p = self.player
+        options = self._grapple_options()
+        if key == "esc" or not options:
+            self.mode = "play"
+            return None
+        if key == "L":
+            self.mode = "play"
+            return self._do(actions.release(self.sim, p))
+        if key == "T":
+            self.mode = "play"
+            return self._ask_direction("Hurl them which way?", lambda d: actions.hurl(self.sim, p, d))
+        pick = None
+        if key == "G":
+            pick = next((o for o in options if o[0] in ("choke", "keep squeezing")), None)
+        elif len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(options):
+            pick = options[ord(key) - ord("a")]
+        if pick is None:
+            return None
+        held = p.grappling
+        self._do(pick[2]())
+        if self.mode == "grapple":
+            if p.grappling is None:
+                self.mode = "play"
+            elif not held.dead and not held.conscious and pick[0] == "choke":
+                self.notice = "They're out cold. Squeezing longer kills them; L to let go."
+        return None
+
+    def _render_grapple(self, con) -> None:
+        t = self.player.grappling
+        if t is None:
+            return
+        options = self._grapple_options()
+        state = "dead" if t.dead else "out cold" if not t.conscious else "struggling"
+        w = 66
+        box(con, 3, 5, w, 7 + len(options), f"Holding {t.name} ({state})")
+        for i, (label, note, _) in enumerate(options):
+            con.print(5, 7 + i, f"{chr(ord('a') + i)}  {label:<24}{note}"[:w - 4], fg=WHITE)
+        con.print(5, 8 + len(options), "T hurl them · L let go · Esc back (then move to drag)"[:w - 4], fg=GREY)
+        wr = self.player.skill("wrestling")
+        con.print(5, 9 + len(options), f"your ST {self.player.stat('ST')} / Wrestling {wr} vs their ST "
+                  f"{t.stat('ST')} / Wrestling {t.skill('wrestling')}"[:w - 4], fg=DARK)
 
     def _key_throwmenu(self, key: str):
         options = actions.throwables(self.player)
@@ -635,7 +712,8 @@ class GameScreen(Screen):
         marks: dict = {}
         for pos, item in self.sim.items:
             if pos[2] == z and pos in self.visible:
-                marks[pos[:2]] = (item.data.get("glyph", "("), RED if item.armed else CYAN,
+                marks[pos[:2]] = (item.data.get("glyph", "("),
+                                  RED if item.armed else DARK_RED if item.data.get("gore") else CYAN,
                                   (70, 0, 0) if item.armed else None)
         for layer in ("dead", "down", "up"):
             for c in self.sim.creatures:
@@ -821,9 +899,9 @@ class GameScreen(Screen):
     def _wound_lines(self, c: Creature):
         for part in c.body.parts.values():
             if part.destroyed:
-                yield f"{part.name}: {part.data.get('destroy_text', 'destroyed')}", RED
+                yield f"{part.name}: {part.note or 'destroyed'}", RED
             elif part.fractured:
-                yield f"{part.name}: broken", ORANGE
+                yield f"{part.name}: {part.note or 'broken'}", ORANGE
             elif part.crippled:
                 yield f"{part.name}: crippled", ORANGE
             elif part.damage:
@@ -927,7 +1005,7 @@ class GameScreen(Screen):
 
     def _render_hints(self, con) -> None:
         hints = {
-            "play": "move/bump · f attack · F quick · t throw · s sneak · G grab/choke · L let go · w swap · ? help",
+            "play": "move/bump · f attack · F quick · t throw · s sneak · G grab/hold · L let go · w swap · ? help",
             "target": "Tab/arrows: choose target · Enter: attack options · Esc: back",
             "attack": "↑↓ location · ←→ feint · Space aim · < > attack · Enter go · Esc back",
             "powers": "letter: use on your target · Esc: back",
@@ -935,6 +1013,7 @@ class GameScreen(Screen):
             "aim": "move the cursor · Tab: jump to a target · Enter: throw · Esc: cancel",
             "dir": "pick a direction · Esc: cancel",
             "throwmenu": "letter: choose · Esc: cancel",
+            "grapple": "letter: do it · G: choke · T: hurl · L: let go · Esc: back",
         }
         con.print(0, con.height - 1, hints.get(self.mode, "")[:con.width], fg=DARK)
 

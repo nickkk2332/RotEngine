@@ -18,9 +18,9 @@ architecture, the rules, and the roadmap.
 | `F` | quick attack with the best option (steps closer if out of reach) |
 | `Tab` | cycle target |
 | `.` / numpad 5 | wait half a second (of your own time) |
-| `r` / `m` / `z` / `g` | reload / first aid / drop prone or stand / pick up a weapon |
+| `r` / `m` / `z` / `g` | reload / first aid / drop prone or stand / pick up (a live grenade first, then a weapon, then anything throwable) |
 | `s` | sneak: half speed, near silent, much harder to spot |
-| `G` / `L` | grab someone next to you (again to choke) / let go; move while holding to drag |
+| `G` / `L` | grab someone next to you / let go; move while holding to drag. `G` while holding opens the hold menu: choke, take down, disarm, wrench a limb, snap the neck, or (if you're strong enough) tear it off |
 | `w` | swap to your other weapon |
 | `t` | throw a grenade, flashbang, smoke, Molotov... (cursor to aim, with your odds) |
 | `T` / `P` | hurl the person you're holding / plant a breaching charge (then a direction) |
@@ -61,6 +61,7 @@ python -m pytest
 | **Tempo** | Continuous time where each creature runs on its own clock. A tempo-8 speedster acts, reacts and recovers 8× as fast and hits with the momentum of it. |
 | **Tactics** | Facing (no defense from behind), a reaction window that punishes being mobbed, cover, stray rounds that hit bystanders, fatigue, first aid. |
 | **Physics** | Doors (locked ones get breached), smashing walls, throwing things and people, grenades with real fuses (throw them back), flashbangs, smoke that blocks sight, tear gas, fire that spreads through wood and burns floors out from under you. |
+| **Grappling** | Chokeholds, takedowns, disarms, joint locks, neck snaps. Armor doesn't stop a joint lock. A normal person breaks an arm; the Hulk tears it off and beats the next soldier with it. Severed limbs and heads are items you can swing and throw. |
 | **Stealth** | Per-enemy awareness from 3d6 Perception vs Stealth, light and darkness (shootable lamps), noise that travels and is muffled by walls, alarms, guards finding bodies, patrols, no defense against the unseen, chokeholds, dragging bodies. |
 | **Threshold damage** | DR subtracts, so a rifle mostly bounces off a DR 25 hide, and a ST 60 punch ignores a vest. |
 | **Voxel world** | z-levels, per-voxel walls and floors with HP/DR, bullets through glass and drywall, knockback through walls, falling, and structural collapse. |
@@ -73,7 +74,7 @@ python -m pytest
 | Scenario | Result |
 |---|---|
 | Street fight: two average people with knives | ~50/50; the loser is usually unconscious, occasionally bleeds out later |
-| The Hulk (ST 60, DR 25) vs 10 armoured riflemen | Hulk wins 100%; soldiers mostly end up unconscious with broken ribs |
+| The Hulk (ST 60, DR 25) vs 10 armoured riflemen | Hulk wins 100%; soldiers mostly end up unconscious with broken ribs, the rest missing arms or heads |
 | John Wick (guns 20) vs 8 armed thugs | Wick wins ~82%; most thugs die of blood loss after the fight |
 | Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~52%; loses to simultaneous bursts |
 | Blink assassin vs 6 guards, 2 with pistols | Assassin wins ~5-9%, usually after several kills. Deliberately hard in an open fight |

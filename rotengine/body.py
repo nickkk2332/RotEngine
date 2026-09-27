@@ -38,6 +38,7 @@ class PartState:
     crippled: bool = False
     fractured: bool = False
     destroyed: bool = False
+    note: str = ""          # what happened to it, in words ("neck snapped", "arm cut off")
 
     @property
     def name(self) -> str:
@@ -60,6 +61,8 @@ class Injury:
     newly_destroyed: bool = False
     lost: list[str] = field(default_factory=list)  # child parts lost with it
     internal: bool = False                          # started internal bleeding
+    spec: dict = field(default_factory=dict)        # the part's data with by_type overrides applied
+    severed: object = None                          # the item left behind by a severed part
 
     @property
     def penetrated(self) -> bool:
@@ -130,16 +133,23 @@ class Body:
             return mults["*"]
         return dtype.get("wound_mult", 1.0)
 
+    @staticmethod
+    def spec(part: PartState, dtype_id: str) -> dict:
+        """A part's data as seen by one damage type: "by_type" overrides
+        texts and effects (a wrenched neck snaps, a cut one is decapitated)."""
+        over = part.data.get("by_type", {}).get(dtype_id)
+        return {**part.data, **over} if over else part.data
+
     def wound(self, part_id: str, raw: int, dr: int, dtype: dict) -> Injury:
         part = self.parts[part_id]
         penetrating = max(0, raw - dr)
         injury = 0
         if penetrating > 0:
             injury = max(1, math.floor(penetrating * self.wound_multiplier(part, dtype)))
-        result = Injury(part, dtype["id"], raw, dr, injury)
+        d = self.spec(part, dtype["id"])
+        result = Injury(part, dtype["id"], raw, dr, injury, spec=d)
         if injury == 0:
             return result
-        d = part.data
         mh = self.max_hp
 
         # Injury past a limb's crippling point is not counted against HP: a
@@ -160,14 +170,20 @@ class Body:
         if (fracture_at is not None and dtype.get("fractures") and not part.fractured
                 and part.damage >= mh * fracture_at):
             part.fractured = result.newly_fractured = True
+            part.note = d.get("fracture_text", "broken")
             if d.get("fracture_cripples") and not part.crippled:
                 part.crippled = result.newly_crippled = True
 
+        # A "sudden" damage type (wrenching) only tears a part off in one
+        # violent pull: cranking an arm over and over breaks it, it doesn't
+        # remove it. Everything else accumulates.
         destroy_at = d.get("destroy_at")
+        amount = injury if dtype.get("sudden") else part.damage
         if (destroy_at is not None and not part.destroyed
                 and (dtype.get("dismembers") or d.get("organ"))
-                and part.damage >= mh * destroy_at):
+                and amount >= mh * destroy_at):
             part.destroyed = part.crippled = result.newly_destroyed = True
+            part.note = d.get("destroy_text", "destroyed")
             result.lost = self._lose_children(part.id)
             self.bleed_rate += d.get("sever_bleed", 0.0)
 
@@ -185,6 +201,7 @@ class Body:
         for p in self.parts.values():
             if p.data.get("parent") == part_id and not p.destroyed:
                 p.destroyed = p.crippled = True
+                p.note = "gone"
                 lost.append(p.name)
                 lost.extend(self._lose_children(p.id))
         return lost
@@ -196,7 +213,7 @@ class Body:
         hurt = []
         for p in self.parts.values():
             if p.destroyed:
-                hurt.append(f"{p.name}: DESTROYED")
+                hurt.append(f"{p.name}: {p.note.upper() or 'DESTROYED'}")
             elif p.crippled:
                 hurt.append(f"{p.name}: {'fractured' if p.fractured else 'crippled'}")
             elif p.fractured:

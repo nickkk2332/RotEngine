@@ -24,6 +24,11 @@ class Item:
         self.armed = False  # an explosive with its fuse burning
 
     @property
+    def the(self) -> str:
+        """ "the pistol", but "Bob's arm" (a severed part is already named)."""
+        return self.name if "'s " in self.name else f"the {self.name}"
+
+    @property
     def attacks(self) -> list[dict]:
         return self.data.get("attacks", [])
 
@@ -258,6 +263,8 @@ class Creature:
         for t in self.traits:
             if "natural_dr" in t:
                 total += lookup(t["natural_dr"])
+        if self.content.has("damage_type", dtype) and self.content.get("damage_type", dtype).get("ignores_armor"):
+            return total  # a joint lock goes around the vest, not through it
         for item in self.worn:
             if item.armor and part_id in item.armor["covers"]:
                 total += lookup(item.armor["dr"])

@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 from . import effects, perception
 from .body import Injury
+from .creature import Item
 from .dice import Dice, check, p_success
 
 if TYPE_CHECKING:
@@ -438,12 +439,14 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
     prev_hp = target.hp
     inj = target.body.wound(part_id, raw, dr, dtype)
     armor = f" - DR {dr}" if dr else ""
+    if inj.newly_destroyed and inj.spec.get("sever_item"):
+        inj.severed = _sever(sim, target, inj)
     if target.dead:
         pass  # corpses still take wounds (and still fly), but nothing more to report
     elif not inj.penetrated:
         sim.log(f"  {raw} {dtype_id} to {target.name}'s {inj.part.name} doesn't get through (DR {dr}).")
     else:
-        p = inj.part.data
+        p = inj.spec
         notes = []
         if inj.newly_destroyed:
             notes.append(p.get("destroy_text", "destroyed") + "!")
@@ -460,7 +463,7 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
         target.shock = min(4, target.shock + shock)
         target.aim_target = None
         _after_injury(sim, target, inj, prev_hp)
-        if (target.conscious and inj.injury >= target.max_hp / 3 and target.grappled_by is None
+        if (target.conscious and inj.injury >= target.max_hp / 3 and target.choked == 0
                 and not target.has_trait("high_pain_threshold")):
             perception.emit_noise(sim, target, target.pos, "scream")
         if not target.dead:
@@ -474,16 +477,32 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
     return inj
 
 
+def _sever(sim: "Sim", c: "Creature", inj: Injury):
+    """A part that comes off leaves something behind: an arm, a leg, a head.
+    It lies where it fell, and it can be picked up, swung and thrown."""
+    data = sim.content.get("item", inj.spec["sever_item"])
+    item = Item(data)
+    item.name = f"{c.name}'s {inj.spec.get('sever_name', inj.part.name)}"
+    sim.drop(c.pos, item)
+    return item
+
+
 def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> None:
     part = inj.part
+    spec = inj.spec
     mh = c.max_hp
     if inj.newly_destroyed:
-        if part.data.get("fatal_if_destroyed"):
-            kill(sim, c, part.data.get("death_text", f"{part.name} destroyed"))
+        if spec.get("fatal_if_destroyed"):
+            kill(sim, c, spec.get("death_text", f"{part.name} destroyed"))
             return
-        status = part.data.get("destroy_status")
+        status = spec.get("destroy_status")
         if status:
             c.add_status(status, None)
+    if inj.newly_fractured and spec.get("fracture_status"):
+        status = spec["fracture_status"]
+        c.add_status(status, None)
+        if sim.content.get("status", status).get("knocks_out"):
+            knock_out(sim, c, "")
     if c.body.hypoxia >= 100:
         kill(sim, c, "brain destroyed")
         return
@@ -528,7 +547,7 @@ def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> Non
 
 def check_grip(sim: "Sim", c: "Creature") -> None:
     if c.wielded is not None and not c.can_grip(c.wielded):
-        sim.log(f"  {c.name} drops the {c.wielded.name}.")
+        sim.log(f"  {c.name} drops {c.wielded.the}.")
         sim.drop(c.pos, c.wielded)
         c.wielded = None
 

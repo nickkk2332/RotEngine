@@ -31,7 +31,7 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
     if c.grappled_by is not None:
         return actions.struggle(sim, c)
     if c.grappling is not None:
-        actions.release(sim, c)  # NPCs don't keep people in holds (yet)
+        return _grapple_turn(sim, c)
     flee = _flee_danger(sim, c)
     if flee is not None:
         return flee
@@ -65,9 +65,13 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
         if cost is not None:
             return cost
     if c.wielded is None and c.template.get("equipment", {}).get("wield"):
-        cost = actions.pick_up(sim, c)  # replace a lost weapon (the Hulk doesn't want a rifle)
+        cost = actions.pick_up(sim, c, weapons_only=True)  # replace a lost weapon (the Hulk doesn't want a rifle)
         if cost is not None:
             return cost
+
+    brute = _brute_moves(sim, c, target, visible)
+    if brute is not None:
+        return brute
 
     grenade = _grenade_throw(sim, c, target, goal, visible, known)
     if grenade is not None:
@@ -163,7 +167,7 @@ def _grenade_throw(sim: "Sim", c: "Creature", target: "Creature", goal: "Pos",
     """Toss a grenade when it's worth it: the target is dug in behind cover
     or out of sight, or several enemies bunch up, and no friend is near
     where it will land."""
-    items = actions.throwables(c)
+    items = [i for i in actions.throwables(c) if "explosive" in i.data]
     if not items or sim.time < getattr(c, "next_grenade", 0):
         return None
     dist = sim.distance_pos(c.pos, goal)
@@ -183,6 +187,52 @@ def _grenade_throw(sim: "Sim", c: "Creature", target: "Creature", goal: "Pos",
         return None
     c.next_grenade = sim.time + GRENADE_EVERY_MS
     return actions.throw(sim, c, item, goal)
+
+
+def _grapple_turn(sim: "Sim", c: "Creature") -> int:
+    """Holding someone. Most NPCs just let go; creatures with a "grapple"
+    style (brutes like the Hulk) tear a limb off to use as a club, or twist
+    the head off, then drop what's left."""
+    t = c.grappling
+    style = c.template.get("grapple")
+    if not style or t.dead or not t.conscious or t.team == c.team:
+        return actions.release(sim, c) or IDLE_MS
+    parts = actions.wrenchable(t)
+    arms = [p for p in parts if "limb" in p.tags and not p.data.get("parent")
+            and "stance" not in p.tags]
+    neck = [p for p in parts if p.id == "neck"]
+    if arms and c.wielded is None and sim.rng.random() < style.get("tear", 0.5):
+        # the gun arm first
+        choice = next((a for a in arms if any(q.data.get("parent") == a.id and q.data.get("primary")
+                                              for q in t.body.parts.values())), arms[0])
+    elif neck:
+        choice = neck[0]
+    elif parts:
+        choice = sim.rng.choice(parts)
+    else:
+        return actions.release(sim, c) or IDLE_MS
+    return actions.wrench(sim, c, choice.id) or actions.release(sim, c) or IDLE_MS
+
+
+def _brute_moves(sim: "Sim", c: "Creature", target: "Creature", visible: list["Creature"]) -> int | None:
+    """Grab someone in reach (creatures with a "grapple" style), or throw
+    whatever's in hand that's made for throwing (a severed arm) at someone
+    too far away to hit."""
+    if target not in visible:
+        return None
+    style = c.template.get("grapple")
+    near = sim.in_melee_reach(c.pos, target.pos) and c.pos[2] == target.pos[2]
+    if (style and near and target.conscious and target.grappled_by is None
+            and sim.rng.random() < style.get("chance", 0.3)):
+        cost = actions.grab(sim, c, target)
+        if cost is not None:
+            return cost
+    held = c.wielded
+    if (held is not None and "thrown" in held.data and not near
+            and sim.distance_pos(c.pos, target.pos) <= physics.throw_range(c, held.data.get("weight", 1))
+            and sim.rng.random() < 0.5):
+        return actions.throw(sim, c, held, target.pos)
+    return None
 
 
 def _believed_pos(c: "Creature", e: "Creature", visible: list["Creature"]) -> "Pos":

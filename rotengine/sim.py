@@ -409,6 +409,9 @@ class Sim:
         arrest = c.has_status("cardiac_arrest")
         b.blood = max(0.0, b.blood - b.total_bleed * (0.2 if arrest else 1.0))  # no pump, little pressure
         rate = 0.04 * (50 - b.blood) if b.blood < 50 else 0.0
+        smothered = c.status_sum("hypoxia")  # can't breathe: a broken neck, a crushed windpipe
+        if smothered:
+            rate = max(rate, smothered)
         if arrest:
             rate = max(rate, CARDIAC_ARREST_HYPOXIA)
             if c.conscious and self.rng.random() < 0.15:
@@ -416,6 +419,8 @@ class Sim:
         b.hypoxia += rate
         if b.hypoxia >= 100:
             cause = "bled out" if b.blood < 50 and not arrest else "brain death"
+            for d in c.status_defs():
+                cause = d.get("death_text", cause) if d.get("hypoxia") else cause
             combat.kill(self, c, cause)
             return
         if c.conscious:
@@ -434,4 +439,4 @@ class Sim:
     def _can_wake(self, c: Creature) -> bool:
         b = c.body
         return (c.hp > 0 and b.blood >= 60 and c.stamina > 0
-                and not c.has_status("cardiac_arrest") and b.hypoxia < 50)
+                and not c.has_status("cardiac_arrest") and not c.status_sum("hypoxia") and b.hypoxia < 50)
