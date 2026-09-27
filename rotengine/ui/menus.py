@@ -79,23 +79,73 @@ class ListMenu(Screen):
 
 
 class MainMenu(Screen):
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.error = ""
+
+    def options(self) -> list[tuple[str, str]]:
+        from .. import roguelike
+        opts = [("a", "Play a scenario"), ("b", "Custom fight"), ("c", "New run: the Black Site")]
+        if roguelike.has_save(self.app.save_path):
+            opts.append(("d", "Continue your run"))
+        return opts + [("q", "Quit")]
+
     def render(self, con):
         for i, line in enumerate(LOGO):
             centered(con, 6 + i, line, fg=TITLE)
         centered(con, 13, "a simulation-first roguelike combat sandbox", fg=GREY)
-        for i, (k, label) in enumerate((("a", "Play a scenario"), ("b", "Custom fight"), ("q", "Quit"))):
-            con.print(40, 17 + 2 * i, k, fg=YELLOW)
-            con.print(43, 17 + 2 * i, label, fg=WHITE)
-        centered(con, 30, "In a fight, press ? for the keys.", fg=DARK)
+        for i, (k, label) in enumerate(self.options()):
+            con.print(38, 17 + 2 * i, k, fg=YELLOW)
+            con.print(41, 17 + 2 * i, label, fg=WHITE)
+        if self.error:
+            centered(con, 29, self.error[:con.width - 4], fg=YELLOW)
+        centered(con, 31, "In a fight, press ? for the keys.", fg=DARK)
 
     def on_key(self, key):
         if key == "a":
             return scenario_menu(self.app)
         if key == "b":
             return CustomFight(self.app)
+        if key == "c":
+            return run_menu(self.app)
+        if key == "d" and any(k == "d" for k, _ in self.options()):
+            return continue_run(self)
         if key in ("q", "esc"):
             return QUIT
         return None
+
+
+def run_menu(app: "App", dungeon_id: str = "black_site", seed: int | None = None) -> Screen:
+    """Pick who goes down."""
+    content = app.content_for({})
+    dungeon = content.get("dungeon", dungeon_id)
+    ids = dungeon.get("characters", ["operative"])
+    items = [(content.get("creature", i)["name"], describe_template(content.get("creature", i), content))
+             for i in ids]
+
+    def pick(i: int):
+        from .. import roguelike
+        from .game import GameScreen
+        run = roguelike.Run(content, dungeon_id, ids[i], random.randrange(1_000_000) if seed is None else seed)
+        run.save(app.save_path)
+        return GameScreen(app, {"id": "run", "name": dungeon["name"]}, content, run.sim, run.player, run.seed,
+                          run=run)
+
+    return ListMenu(app, f"{dungeon['name']}: who goes down?", items, pick, back=lambda: MainMenu(app),
+                    footer=dungeon.get("description", "")[:90])
+
+
+def continue_run(menu: "MainMenu") -> Screen | None:
+    from .. import roguelike
+    from .game import GameScreen
+    app = menu.app
+    try:
+        run = roguelike.load(app.save_path)
+    except roguelike.SaveError as e:
+        menu.error = str(e)
+        return None
+    return GameScreen(app, {"id": "run", "name": run.dungeon["name"]}, run.content, run.sim, run.player,
+                      run.seed, run=run)
 
 
 def scenario_menu(app: "App") -> Screen:

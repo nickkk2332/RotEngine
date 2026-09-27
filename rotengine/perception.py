@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from . import grapple
+from . import grapple, training
 from .dice import check
 
 if TYPE_CHECKING:
@@ -202,7 +202,9 @@ def perceive(sim: "Sim", c: "Creature") -> None:
         obs = check(sim.rng, perception(c) + mods)
         if not obs.success:
             continue
-        hidden = check(sim.rng, stealth(sim, t))
+        sneak = stealth(sim, t)
+        hidden = check(sim.rng, sneak)
+        training.practice(sim, t, "stealth", sneak, hidden.success and hidden.margin > obs.margin)
         if hidden.success and hidden.margin > obs.margin:
             gain = 10  # a glimpse of something
         else:

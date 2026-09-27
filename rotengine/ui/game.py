@@ -21,6 +21,7 @@ from .theme import (BLACK, BLUE, CONE_FRONT_BG, CONE_SIDE_BG, CURSOR_BG, CYAN, S
 from .widgets import bar, box, print_wrapped, wrap
 
 if TYPE_CHECKING:
+    from ..roguelike import Run
     from ..sim import Sim
     from ..world import Pos
     from .app import App
@@ -47,9 +48,11 @@ HELP = [
     ("r", "reload"),
     ("m", "first aid (yourself, or a bleeding ally next to you)"),
     ("z", "drop prone / stand up"),
-    ("g", "pick up: a live grenade first, else a weapon, else something to throw"),
+    ("g", "pick up (a live grenade first; a menu if there's a choice)"),
+    ("i / a / @", "inventory / use medicine / character sheet (skills, wounds)"),
+    ("R", "rest: heal until something happens (roguelike)"),
     ("p", "use a power"),
-    ("< >", "go up / down stairs"),
+    ("< >", "go up / down stairs; > on a stairwell takes you to the next floor"),
     ("[ ]", "look at the level below / above"),
     ("x", "look around (inspect anyone's wounds)"),
     ("Esc", "quit to the menu"),
@@ -107,9 +110,12 @@ class AttackMenu:
 
 
 class GameScreen(Screen):
-    def __init__(self, app: "App", scenario: dict, content, sim: "Sim", player: Creature, seed: int):
+    def __init__(self, app: "App", scenario: dict, content, sim: "Sim", player: Creature, seed: int,
+                 run: "Run | None" = None):
         super().__init__(app)
         self.scenario, self.content, self.sim, self.player, self.seed = scenario, content, sim, player, seed
+        self.run = run  # roguelike mode: floors, saving, permadeath
+        self._grave_dug = False
         self.player_index = sim.creatures.index(player)
         player.controller = "player"
         self.mode = "play"
@@ -143,13 +149,27 @@ class GameScreen(Screen):
         return sorted(foes, key=lambda c: (self.sim.distance(p, c), c.uid))
 
     def _on_turn(self) -> None:
+        if self.run is not None:
+            # out cold for a long time: the world keeps going until you wake (or don't)
+            for _ in range(20):
+                if self.status != "timeout" or self.player.dead:
+                    break
+                self.status = self.sim.advance()
+            if self.run.state != "playing":
+                self._update_fov()
+                self.mode = "over"
+                if not self._grave_dug:  # permadeath (and a finished run is finished)
+                    self._grave_dug = True
+                    from .. import roguelike
+                    roguelike.delete_save(self.app.save_path)
+                return
         self._update_fov()
         foes = self._visible_enemies()
         if self.target not in foes:
             self.player.target = foes[0] if foes else self.target
         if self.status == "player" and self.target in foes:
             combat.face(self.player, self.target.pos)  # same free turn-to-face the AI gets
-        if self.status in ("over", "timeout"):
+        if self.status in ("over", "timeout") and self.run is None:
             self.mode = "over"
 
     def _update_fov(self) -> None:
@@ -289,13 +309,33 @@ class GameScreen(Screen):
                 return self._do(actions.stand_up(sim, p), "Your legs won't hold you.")
             return self._do(actions.go_prone(sim, p))
         if key == "g":
-            return self._do(actions.pick_up(sim, p), "Nothing here you can pick up and use.")
+            near = actions.items_near(sim, p)
+            if len(near) > 1 and not any(i.armed for i in near):
+                self.mode = "pickup"
+                return None
+            return self._do(actions.pick_up(sim, p), "Nothing here to pick up.")
         if key == "p":
             if not p.powers:
                 self.notice = "You have no powers."
                 return None
             self.mode = "powers"
             return None
+        if key == ">" and self.run is not None and self.run.at_exit():
+            return self._descend()
+        if key == "i":
+            self.mode = "inventory"
+            return None
+        if key == "a":
+            if not actions.usable(p):
+                self.notice = "You have no medicine or anything else to use."
+                return None
+            self.mode = "usemenu"
+            return None
+        if key == "@":
+            self.mode = "sheet"
+            return None
+        if key == "R":
+            return self._rest()
         if key in ("<", ">"):
             return self._do(actions.climb(sim, p, 1 if key == "<" else -1),
                             "There are no usable stairs here.")
@@ -664,11 +704,15 @@ class GameScreen(Screen):
 
     def _key_confirm(self, key: str):
         if key in ("y", "Y"):
+            if self.run is not None and self.run.state == "playing":
+                self.run.save(self.app.save_path)
             return MainMenu(self.app)
         self.mode = "play"
         return None
 
     def _key_over(self, key: str):
+        if self.run is not None:
+            return MainMenu(self.app) if key in ("q", "esc", "enter", " ") else None
         if key == "a":
             self._run_aftermath()
             self.mode = "summary"
@@ -700,6 +744,144 @@ class GameScreen(Screen):
         return GameScreen(self.app, self.scenario, self.content, sim,
                           sim.creatures[self.player_index], seed)
 
+    # -- roguelike: floors, rest, items ---------------------------------------
+    def _descend(self) -> None:
+        run = self.run
+        if not run.descend():
+            self.notice = "You can't go down right now."
+            return None
+        self.sim = run.sim
+        self.seen, self.visible, self.cursor = {}, set(), None
+        self.mode = "play"
+        self.status = self.sim.advance()
+        self._on_turn()
+        run.save(self.app.save_path)
+        self.notice = f"Floor {run.depth}: {run.plan.name}. (saved)"
+        return None
+
+    REST_STEP_MS = 10_000
+    REST_LIMIT_MS = 3_600_000
+
+    def _rested(self) -> bool:
+        p = self.player
+        b = p.body
+        return (p.hp >= p.max_hp and b.blood >= 99.5 and p.stamina >= p.max_stamina
+                and not any(q.splinted or (q.crippled and not q.fractured and not q.destroyed)
+                            for q in b.parts.values()))
+
+    def _rest(self):
+        """Rest (and heal) in 10-second steps until you're as good as you'll
+        get, something happens, or an hour passes."""
+        p, sim = self.player, self.sim
+        if self._visible_enemies():
+            self.notice = "Not with enemies in sight."
+            return None
+        if self._rested():
+            self.notice = "You're as rested as you'll get. (Unsplinted breaks don't heal.)"
+            return None
+        start, why = sim.time, "an hour passes"
+        while sim.time - start < self.REST_LIMIT_MS:
+            seen_lines = len(sim.lines)
+            sim.player_act(self.REST_STEP_MS)
+            self.status = sim.advance()
+            self._on_turn()
+            if self.status != "player" or self.mode == "over":
+                return None
+            heard = [line for line, (_, who) in zip(sim.lines[seen_lines:], sim.line_meta[seen_lines:])
+                     if who == p.uid and "You hear" in line]
+            if self._visible_enemies():
+                why = "someone comes into view"
+                break
+            if any(perception.awareness(o, p).level >= perception.SUSPICIOUS for o in sim.enemies_of(p)
+                   if p.uid in o.awareness):
+                why = "someone's onto you"
+                break
+            if heard:
+                why = "a sound: " + heard[-1].split("] ", 1)[-1]
+                break
+            if self._rested():
+                why = "you're as good as you'll get"
+                break
+        mins = (sim.time - start) / 60_000
+        self.notice = f"Rested {mins:.0f} min: {why}."[:80]
+        return None
+
+    def _inventory(self) -> list[tuple[str, object, str]]:
+        """(where, item, label) for everything you have."""
+        p = self.player
+        out = []
+        if p.wielded is not None:
+            out.append(("hand", p.wielded, f"{p.wielded.name} (in hand)"))
+        out += [("worn", i, f"{i.name} (worn)") for i in p.worn]
+        out += [("pack", i, i.name) for i in p.carried]
+        return out
+
+    def _key_inventory(self, key: str):
+        inv = self._inventory()
+        if key in ("esc", "i"):
+            self.mode = "play"
+        elif len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(inv):
+            self._inv_item = inv[ord(key) - ord("a")][1]
+            self.mode = "itemmenu"
+        return None
+
+    def _item_actions(self, item) -> list[tuple[str, object]]:
+        p, sim = self.player, self.sim
+        acts = []
+        if "use" in item.data and item in p.carried:
+            why = actions.cannot_use(sim, p, item)
+            acts.append(("use" + (f" ({why})" if why else ""), lambda: actions.use_item(sim, p, item)))
+        if item in p.carried and item.attacks:
+            acts.append(("wield", lambda: actions.wield(sim, p, item)))
+        if item in p.carried and item.armor:
+            acts.append(("wear (8 s)", lambda: actions.wear(sim, p, item)))
+        if item in p.worn:
+            acts.append(("take off (4 s)", lambda: actions.take_off(sim, p, item)))
+        if item in actions.throwables(p):
+            acts.append(("throw", "throw"))
+        if item not in p.worn:
+            acts.append(("drop", lambda: actions.drop_item(sim, p, item)))
+        return acts
+
+    def _key_itemmenu(self, key: str):
+        item = self._inv_item
+        acts = self._item_actions(item)
+        if key == "esc":
+            self.mode = "inventory"
+            return None
+        if not (len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(acts)):
+            return None
+        label, act = acts[ord(key) - ord("a")]
+        self.mode = "play"
+        if act == "throw":
+            return self._start_aim(item)
+        return self._do(act(), f"You can't {label.split(' (')[0]} that now.")
+
+    def _key_usemenu(self, key: str):
+        items = actions.usable(self.player)
+        if key in ("esc", "a"):
+            self.mode = "play"
+        elif len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(items):
+            item = items[ord(key) - ord("a")]
+            self.mode = "play"
+            why = actions.cannot_use(self.sim, self.player, item)
+            return self._do(actions.use_item(self.sim, self.player, item), f"No point: {why}.")
+        return None
+
+    def _key_pickup(self, key: str):
+        near = actions.items_near(self.sim, self.player)
+        if key in ("esc", "g"):
+            self.mode = "play"
+        elif len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(near):
+            self.mode = "play"
+            return self._do(actions.pick_up(self.sim, self.player, which=near[ord(key) - ord("a")]),
+                            "You can't pick that up.")
+        return None
+
+    def _key_sheet(self, key: str):
+        self.mode = "play"
+        return None
+
     # -- drawing -----------------------------------------------------------
     def _tile(self, pos: "Pos") -> tuple[str, tuple]:
         w = self.sim.world
@@ -708,6 +890,8 @@ class GameScreen(Screen):
             return fill["glyph"], material_fg(fill["id"])
         floor = w.floor_mat(pos)
         if floor is not None:
+            if floor.get("exit"):  # the way down stands out
+                return floor.get("floor_glyph", ">"), material_fg(floor["id"])
             return floor.get("floor_glyph", "."), dim(material_fg(floor["id"]), 0.6)
         x, y, z = pos
         if z > 0:  # open air: glimpse the level below
@@ -747,8 +931,13 @@ class GameScreen(Screen):
     def _render_top(self, con) -> None:
         s = self.sim
         title = self.scenario.get("name", self.scenario.get("id", ""))
+        if self.run is not None:
+            title = f"Floor {self.run.depth}/{self.run.last_depth}: {self.run.plan.name}"
+            m, sec = divmod(int(s.time // 1000), 60)
+            right = f"{m // 60}:{m % 60:02d}:{sec:02d} "
+        else:
+            right = f"t={s.time / 1000:.2f}s  level {self.view_z}{' (viewing)' if self.view_z != self.player.pos[2] else ''} "
         con.print(0, 0, f" {title} ", fg=TITLE)
-        right = f"t={s.time / 1000:.2f}s  level {self.view_z}{' (viewing)' if self.view_z != self.player.pos[2] else ''} "
         con.print(con.width - len(right), 0, right, fg=GREY)
         if self.notice:
             con.print(len(title) + 3, 0, self.notice[:con.width - len(title) - len(right) - 4], fg=YELLOW)
@@ -1109,7 +1298,9 @@ class GameScreen(Screen):
 
     def _render_hints(self, con) -> None:
         hints = {
-            "play": "move/bump · f attack · F quick · t throw · s sneak · G grab/hold · L let go · w swap · ? help",
+            "play": ("move · f attack · s sneak · G grab · g get · i items · a use · R rest · > down · ? help"
+                     if self.run else
+                     "move/bump · f attack · F quick · t throw · s sneak · G grab/hold · L let go · w swap · ? help"),
             "target": "Tab/arrows: choose target · Enter: attack options · Esc: back",
             "attack": "↑↓ location · ←→ feint · Space aim · < > attack · Enter go · Esc back",
             "powers": "letter: use on your target · Esc: back",
@@ -1117,6 +1308,10 @@ class GameScreen(Screen):
             "aim": "move the cursor · Tab: jump to a target · Enter: throw · Esc: cancel",
             "dir": "pick a direction · Esc: cancel",
             "throwmenu": "letter: choose · Esc: cancel",
+            "inventory": "letter: choose an item · Esc: close",
+            "itemmenu": "letter: do it · Esc: back",
+            "usemenu": "letter: use it · Esc: close",
+            "pickup": "letter: take it · Esc: close",
             "grapple": "letter: do it · T: hurl · L: let go · Esc: back",
             "grab": "letter: grab there · Tab: someone else · Esc: back",
         }
@@ -1194,6 +1389,90 @@ class GameScreen(Screen):
                       + (f" - {why}" if why else ""), fg=DARK if why else WHITE)
             print_wrapped(con, 11, 9 + 3 * i, 49, pw.get("description", ""), fg=GREY, max_lines=2)
 
+    def _render_list(self, con, title: str, lines: list[tuple[str, tuple]], footer: str) -> None:
+        w = 60
+        box(con, 3, 3, w, len(lines) + 5, title)
+        for i, (text, fg) in enumerate(lines):
+            con.print(5, 5 + i, f"{chr(ord('a') + i)}  {text}"[:w - 4], fg=fg)
+        con.print(5, 6 + len(lines), footer, fg=DARK)
+
+    def _render_inventory(self, con) -> None:
+        inv = self._inventory()
+        lines = [(label, CYAN if where == "hand" else GREY if where == "worn" else WHITE)
+                 for where, _, label in inv] or [("(nothing)", DARK)]
+        self._render_list(con, "Inventory", lines, "letter: choose · Esc: close")
+
+    def _render_itemmenu(self, con) -> None:
+        item = self._inv_item
+        acts = self._item_actions(item)
+        desc = item.data.get("description", "")
+        self._render_list(con, item.name, [(label, WHITE if "(" not in label or label.startswith(("wear", "take"))
+                                            else DARK) for label, _ in acts], "letter: do it · Esc: back")
+        if desc:
+            print_wrapped(con, 5, 8 + len(acts), 56, desc, fg=CYAN, max_lines=4)
+
+    def _render_usemenu(self, con) -> None:
+        p = self.player
+        lines = []
+        for item in actions.usable(p):
+            why = actions.cannot_use(self.sim, p, item)
+            secs = item.data["use"].get("time_ms", 1000) / 1000
+            lines.append((f"{item.name} ({secs:g} s)" + (f": {why}" if why else ""), DARK if why else WHITE))
+        self._render_list(con, "Use what?", lines, "letter: use it · Esc: close")
+
+    def _render_pickup(self, con) -> None:
+        near = actions.items_near(self.sim, self.player)
+        self._render_list(con, "Pick up what?", [(i.name, RED if i.armed else WHITE) for i in near],
+                          "letter: take it · Esc: close")
+
+    def _render_sheet(self, con) -> None:
+        from .. import training
+        p = self.player
+        box(con, 2, 2, 64, 38, p.name)
+        con.print(4, 4, "  ".join(f"{s} {p.stat(s)}" for s in ("ST", "CON", "DEX", "INT", "WIS")), fg=WHITE)
+        con.print(4, 5, f"HP {round(p.hp)}/{p.max_hp} · blood {p.body.blood:.0f}% · "
+                        f"stamina {p.stamina:.0f}/{p.max_stamina}", fg=GREY)
+        y = 7
+        con.print(4, y, "Skills (bar: progress to the next level)", fg=TITLE)
+        y += 1
+        skills = sorted(set(p.skills) | set(p.practice))
+        for sk in skills:
+            frac = training.progress(p, sk)
+            con.print(4, y, f"{sk.replace('_', ' '):<12}{p.skill(sk):>3}", fg=WHITE)
+            bar(con, 21, y, 12, frac, GREEN)
+            y += 1
+        y += 1
+        if p.traits:
+            con.print(4, y, ("Traits: " + ", ".join(t.get("name", t["id"]) for t in p.traits))[:60], fg=CYAN)
+            y += 2
+        con.print(4, y, "Wounds", fg=TITLE)
+        y += 1
+        lines = list(self._wound_lines(p))
+        for text, fg in lines[:14] or [("none", GREEN)]:
+            note = " (splinted)" if any(q.splinted and text.startswith(q.name) for q in p.body.parts.values()) else ""
+            con.print(4, y, (text + note)[:60], fg=fg)
+            y += 1
+        if self.run is not None:
+            y += 1
+            con.print(4, min(y, 36), f"{self.run.dead_so_far()} dead behind you · {self.run.minutes():.0f} minutes in"[:60],
+                      fg=GREY)
+        con.print(4, 38, "any key to close", fg=DARK)
+
+    def _render_run_over(self, con) -> None:
+        run = self.run
+        won = run.state == "won"
+        box(con, 6, 6, 58, 16 + len(run.history), "It's over" if won else "Dead")
+        y = 8
+        y += print_wrapped(con, 8, y, 54, run.epitaph(), fg=GREEN if won else RED, max_lines=3)
+        y += 1
+        for line in run.history + [f"Floor {run.depth} ({run.plan.name}): where it ended."]:
+            y += print_wrapped(con, 8, y, 54, line, fg=GREY, max_lines=2)
+        y += 1
+        p = run.player
+        skills = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in sorted(p.skills.items()))
+        y += print_wrapped(con, 8, y, 54, f"Skills at the end: {skills}", fg=CYAN, max_lines=3)
+        con.print(8, y + 1, "Enter: back to the menu", fg=DARK)
+
     def _render_help(self, con) -> None:
         box(con, 4, 3, 60, len(HELP) + 6, "Keys")
         for i, (k, what) in enumerate(HELP):
@@ -1202,10 +1481,13 @@ class GameScreen(Screen):
         con.print(6, 6 + len(HELP), "any key to close", fg=DARK)
 
     def _render_confirm(self, con) -> None:
-        box(con, 18, 14, 34, 5, "Quit")
-        con.print(20, 16, "Leave this fight? (y/n)", fg=WHITE)
+        box(con, 18, 14, 36, 5, "Quit")
+        con.print(20, 16, "Save and quit to the menu? (y/n)" if self.run else "Leave this fight? (y/n)",
+                  fg=WHITE)
 
     def _render_over(self, con) -> None:
+        if self.run is not None:
+            return self._render_run_over(con)
         winner = self.sim.winner()
         p = self.player
         if self.status == "timeout":

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from . import combat, perception, physics
+from . import combat, effects, perception, physics, training
 from .dice import check
 from .grapple import (  # noqa: F401  (grappling verbs live in grapple.py)
     check_grapple, choke, disarm, grab, hurl, release, squeeze, strangle, struggle, takedown, wrench, wrest)
@@ -118,6 +118,7 @@ def bandage(sim: "Sim", c: "Creature", patient: "Creature") -> int | None:
     severity = 3 if bleed < 0.5 else 0 if bleed < 1.5 else -3
     skill = c.skill("first_aid") + severity - c.action_penalty() - (2 if patient is c else 0)
     r = check(sim.rng, skill)
+    training.practice(sim, c, "first_aid", skill, r.success)
     who = "their own wounds" if patient is c else f"{patient.name}'s wounds"
     if r.success:
         patient.body.bleed_rate = 0.0 if r.critical or r.margin >= 5 else bleed * 0.25
@@ -128,14 +129,65 @@ def bandage(sim: "Sim", c: "Creature", patient: "Creature") -> int | None:
     return FIRST_AID_MS
 
 
-def pick_up(sim: "Sim", c: "Creature", weapons_only: bool = False) -> int | None:
-    """Pick something up from your tile or next to you. A live grenade comes
-    first (so you can throw it back); then a weapon, if your hands are free;
-    then anything else you could throw."""
+def usable(c: "Creature") -> list:
+    """Carried things with a "use" block (medicine)."""
+    return [i for i in c.carried if "use" in i.data]
+
+
+def cannot_use(sim: "Sim", c: "Creature", item) -> str | None:
+    """Why c can't use this item right now, or None."""
+    use = item.data.get("use")
+    if use is None or item not in c.carried:
+        return "that isn't something you can use"
+    if not c.body.functional_with("grasp"):
+        return "you have no working hand"
+    if "needs" in use and not effects.test(use["needs"], effects.Ctx(sim, c, c)):
+        return use.get("needs_text", "it wouldn't do anything")
+    return None
+
+
+def use_item(sim: "Sim", c: "Creature", item) -> int | None:
+    """Use medicine (or anything with a "use" block) on yourself. With a
+    "skill", the roll decides between "effects" and "fail_effects"; the item
+    is used up either way unless it says "keep": true."""
+    if cannot_use(sim, c, item):
+        return None
+    use = item.data["use"]
+    ctx = effects.Ctx(sim, c, c)
+    ok = True
+    note = ""
+    if "skill" in use:
+        target = c.skill(use["skill"]) + use.get("mod", 0) - c.action_penalty()
+        roll = check(sim.rng, target)
+        training.practice(sim, c, use["skill"], target, roll.success)
+        ok = roll.success
+        note = "" if ok else f" (a botched job: rolled {roll.roll} vs {target})"
+    with sim.focus(c.pos):
+        sim.log(f"{c.name} uses {item.the}{note}.")
+        effects.run(use["effects"] if ok else use.get("fail_effects", []), ctx)
+    if not use.get("keep"):
+        c.carried.remove(item)
+    return int(use.get("time_ms", 1000))
+
+
+def items_near(sim: "Sim", c: "Creature") -> list:
+    """Items on your tile or next to you."""
+    return [item for pos, item in sim.items if pos == c.pos or sim.in_melee_reach(c.pos, pos)]
+
+
+def pick_up(sim: "Sim", c: "Creature", weapons_only: bool = False, which=None) -> int | None:
+    """Pick something up from your tile or next to you: `which` item, or the
+    most urgent. A live grenade comes first (so you can throw it back); then a
+    weapon, if your hands are free (into your hands); then anything else
+    (into your pack)."""
     if not c.body.functional_with("grasp"):
         return None
     near = [(i, item) for i, (pos, item) in enumerate(sim.items)
             if pos == c.pos or sim.in_melee_reach(c.pos, pos)]
+    if which is not None:
+        near = [(i, item) for i, item in near if item is which]
+        if not near:
+            return None
 
     def take(i: int, item, wield: bool) -> int:
         sim.items.pop(i)
@@ -159,7 +211,61 @@ def pick_up(sim: "Sim", c: "Creature", weapons_only: bool = False) -> int | None
         for i, item in near:
             if "throwable" in item.data and not item.data.get("plantable"):
                 return take(i, item, False)
+        for i, item in near:  # medicine, armor, charges, spare weapons: into the pack
+            return take(i, item, False)
     return None
+
+
+def drop_item(sim: "Sim", c: "Creature", item) -> int | None:
+    if item is c.wielded:
+        c.wielded = None
+    elif item in c.carried:
+        c.carried.remove(item)
+    else:
+        return None
+    sim.drop(c.pos, item)
+    with sim.focus(c.pos):
+        sim.log(f"{c.name} drops {item.the}.")
+    return 500
+
+
+def wield(sim: "Sim", c: "Creature", item) -> int | None:
+    """Take a carried weapon in hand (what you held goes in the pack)."""
+    if item not in c.carried or not item.attacks or not c.can_grip(item):
+        return None
+    c.carried.remove(item)
+    if c.wielded is not None:
+        c.carried.append(c.wielded)
+    c.wielded = item
+    sim.log(f"{c.name} draws {item.the}.")
+    return SWAP_MS
+
+
+WEAR_MS = 8000
+
+
+def wear(sim: "Sim", c: "Creature", item) -> int | None:
+    """Put on carried armor (slow: don't do it with anyone watching). Takes
+    off whatever it would replace on the same body parts."""
+    if item not in c.carried or not item.armor:
+        return None
+    covers = set(item.armor["covers"])
+    for old in [w for w in c.worn if set(w.armor["covers"]) & covers]:
+        c.worn.remove(old)
+        c.carried.append(old)
+    c.carried.remove(item)
+    c.worn.append(item)
+    sim.log(f"{c.name} puts on {item.the}.")
+    return WEAR_MS
+
+
+def take_off(sim: "Sim", c: "Creature", item) -> int | None:
+    if item not in c.worn:
+        return None
+    c.worn.remove(item)
+    c.carried.append(item)
+    sim.log(f"{c.name} takes off {item.the}.")
+    return WEAR_MS // 2
 
 
 

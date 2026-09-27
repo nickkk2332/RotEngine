@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from . import effects, grapple, perception
+from . import effects, grapple, perception, training
 from .body import Injury
 from .creature import Item
 from .dice import Dice, check, p_success
@@ -314,6 +314,7 @@ def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_m
     where = f" (aiming for the {target.body.part(plan.location).name})" if plan.location else ""
     verb = attack.get("verb", attack["name"])
     roll = check(sim.rng, plan.skill)
+    training.practice(sim, attacker, attack["skill"], plan.skill, roll.success)
 
     if not roll.success:
         sim.log(f"{attacker.name} {verb} {target.name}{where} and misses "

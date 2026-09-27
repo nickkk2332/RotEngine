@@ -260,6 +260,32 @@ def _v_stamina(args, ctx):
     return who.stamina if who else 0
 
 
+@value("bleeding")
+def _v_bleeding(args, ctx):
+    """External bleeding, % of blood per second."""
+    who = ctx.who(args)
+    return who.body.bleed_rate if who else 0
+
+
+@value("internal_bleeding")
+def _v_internal_bleeding(args, ctx):
+    who = ctx.who(args)
+    return who.body.internal_bleed if who else 0
+
+
+@value("blood")
+def _v_blood(args, ctx):
+    who = ctx.who(args)
+    return who.body.blood if who else 0
+
+
+@value("fractures")
+def _v_fractures(args, ctx):
+    """Broken bones not yet splinted."""
+    who = ctx.who(args)
+    return sum(p.fractured and not p.splinted and not p.destroyed for p in who.body.parts.values()) if who else 0
+
+
 @value("distance_to_target")
 def _v_dist(_args, ctx):
     return ctx.sim.distance(ctx.self, ctx.target) if ctx.target else 9999
@@ -406,6 +432,28 @@ def _e_stop_bleeding(args, ctx):
     who.body.bleed_rate *= keep
     if args.get("internal"):
         who.body.internal_bleed *= keep
+
+
+@effect("splint")
+def _e_splint(args, ctx):
+    """Splint the worst unsplinted break: most of its pain goes, and it
+    heals with rest (see Body.recover)."""
+    who = ctx.who(args)
+    if who is None or who.dead:
+        return
+    broken = [p for p in who.body.parts.values() if p.fractured and not p.splinted and not p.destroyed]
+    if broken:
+        part = max(broken, key=lambda p: p.damage)
+        part.splinted = True
+        ctx.sim.log(f"  {who.name}'s {part.name} is splinted.")
+
+
+@effect("restore_stamina")
+def _e_restore_stamina(args, ctx):
+    who = ctx.who(args)
+    if who is None or who.dead:
+        return
+    who.stamina = min(who.max_stamina, who.stamina + evaluate(args["amount"], ctx))
 
 
 @effect("restore_blood")

@@ -1,0 +1,214 @@
+[
+ {
+  "type": "monster_group",
+  "id": "dock_crew",
+  "entries": [
+   {
+    "creature": "street_tough",
+    "weight": 10
+   },
+   {
+    "creature": "thug",
+    "weight": 8
+   },
+   {
+    "creature": "gunman",
+    "weight": 3
+   },
+   {
+    "creature": "firebug",
+    "weight": 2
+   }
+  ]
+ },
+ {
+  "type": "monster_group",
+  "id": "site_security",
+  "entries": [
+   {
+    "creature": "watchman",
+    "weight": 8
+   },
+   {
+    "creature": "sentry",
+    "weight": 8
+   },
+   {
+    "creature": "sharp_sentry",
+    "weight": 3
+   },
+   {
+    "creature": "guard",
+    "weight": 4
+   },
+   {
+    "creature": "gunman",
+    "weight": 2,
+    "depth": [
+     3,
+     99
+    ]
+   }
+  ]
+ },
+ {
+  "type": "monster_group",
+  "id": "black_site",
+  "entries": [
+   {
+    "creature": "soldier",
+    "weight": 8
+   },
+   {
+    "creature": "sentry",
+    "weight": 4
+   },
+   {
+    "creature": "sharp_sentry",
+    "weight": 3
+   },
+   {
+    "creature": "swat",
+    "weight": 3,
+    "depth": [
+     5,
+     99
+    ]
+   }
+  ]
+ },
+ {
+  "type": "item_group",
+  "id": "loot_street",
+  "entries": [
+   {
+    "item": "bandage",
+    "weight": 10
+   },
+   {
+    "item": "painkillers",
+    "weight": 6
+   },
+   {
+    "item": "knife",
+    "weight": 6
+   },
+   {
+    "item": "baseball_bat",
+    "weight": 5
+   },
+   {
+    "item": "pistol",
+    "weight": 3
+   },
+   {
+    "item": "molotov",
+    "weight": 4
+   },
+   {
+    "item": "leather_jacket",
+    "weight": 3
+   },
+   {
+    "item": "splint",
+    "weight": 3
+   }
+  ]
+ },
+ {
+  "type": "item_group",
+  "id": "loot_office",
+  "entries": [
+   {
+    "item": "bandage",
+    "weight": 8
+   },
+   {
+    "item": "painkillers",
+    "weight": 6
+   },
+   {
+    "item": "splint",
+    "weight": 5
+   },
+   {
+    "item": "stimulant",
+    "weight": 3
+   },
+   {
+    "item": "trauma_kit",
+    "weight": 2
+   },
+   {
+    "item": "pistol",
+    "weight": 4
+   },
+   {
+    "item": "flashbang",
+    "weight": 3
+   },
+   {
+    "item": "smoke_grenade",
+    "weight": 3
+   },
+   {
+    "item": "baseball_bat",
+    "weight": 3
+   }
+  ]
+ },
+ {
+  "type": "item_group",
+  "id": "loot_military",
+  "entries": [
+   {
+    "item": "trauma_kit",
+    "weight": 5
+   },
+   {
+    "item": "bandage",
+    "weight": 6
+   },
+   {
+    "item": "splint",
+    "weight": 5
+   },
+   {
+    "item": "blood_bag",
+    "weight": 3
+   },
+   {
+    "item": "stimulant",
+    "weight": 3
+   },
+   {
+    "item": "frag_grenade",
+    "weight": 5
+   },
+   {
+    "item": "flashbang",
+    "weight": 4
+   },
+   {
+    "item": "shotgun",
+    "weight": 3
+   },
+   {
+    "item": "assault_rifle",
+    "weight": 3
+   },
+   {
+    "item": "ballistic_vest",
+    "weight": 3
+   },
+   {
+    "item": "helmet",
+    "weight": 3
+   },
+   {
+    "item": "breaching_charge",
+    "weight": 2
+   }
+  ]
+ }
+]

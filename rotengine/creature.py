@@ -53,6 +53,7 @@ class Creature:
         self.traits = [content.get("trait", t) for t in template.get("traits", [])]
         self.powers = [content.get("power", p) for p in template.get("powers", [])]
         self.statuses: dict[str, float | None] = {}  # status id -> expiry time (ms) or None
+        self.practice: dict[str, float] = {}  # skill id -> points toward the next level (training.py)
 
         plan = content.get("body_plan", template["body"])
         # HP = ST, stamina = CON. Templates can buy extra of either.
@@ -192,6 +193,8 @@ class Creature:
         lost = max(0.0, self.max_hp - self.hp)
         p = 4 * lost / self.max_hp + self.body.fractures()
         p *= self.trait_product("pain_mult")
+        for d in self.status_defs():
+            p *= d.get("pain_mult", 1.0)  # painkillers, adrenaline
         p -= max(0, self.stat("WIS") - 10) / 2
         return max(0, min(6, int(p)))
 

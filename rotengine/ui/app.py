@@ -22,6 +22,8 @@ class App:
     def __init__(self, mods: list[str] | None = None):
         self.mods = list(mods or [])
         self._content: dict[tuple[str, ...], Content] = {}
+        from ..roguelike import save_path
+        self.save_path = save_path()  # tests point this somewhere harmless
         self.screen: Screen = MainMenu(self)
         self.running = True
 
@@ -38,9 +40,29 @@ class App:
         elif nxt is not None:
             self.screen = nxt
 
+    def close(self) -> None:
+        """The window is closing: a run in progress is saved, not lost."""
+        run = getattr(self.screen, "run", None)
+        if run is not None and run.state == "playing":
+            run.save(self.save_path)
+
     def render(self, con: tcod.console.Console) -> None:
         con.clear()
         self.screen.render(con)
+
+    def start_run(self, character: str, seed: int | None = None, dungeon_id: str = "black_site") -> None:
+        """Jump straight into a new roguelike run as that creature."""
+        import random
+
+        from .. import roguelike
+        from .game import GameScreen
+        content = self.content_for({})
+        if not content.has("creature", character):
+            raise arena.ScenarioError(f"no creature '{character}'")
+        run = roguelike.Run(content, dungeon_id, character, random.randrange(1_000_000) if seed is None else seed)
+        run.save(self.save_path)
+        self.screen = GameScreen(self, {"id": "run", "name": run.dungeon["name"]}, content, run.sim,
+                                 run.player, run.seed, run=run)
 
     def start(self, scenario_id: str, play_as: str | None = None, seed: int | None = None) -> None:
         """Jump straight into a scenario (optionally as a named creature)."""
@@ -74,10 +96,15 @@ def load_font(name: str = "mono") -> tcod.tileset.Tileset:
 
 
 def main(scenario: str | None = None, play_as: str | None = None, seed: int | None = None,
-         font: str = "mono", mods: list[str] | None = None) -> None:
+         font: str = "mono", mods: list[str] | None = None, run: str | None = None) -> None:
     app = App(mods)
     if scenario:
         app.start(scenario, play_as, seed)
+    elif run == "continue":
+        from .menus import continue_run
+        app.screen = continue_run(app.screen) or app.screen
+    elif run:
+        app.start_run(run, seed)
     console = tcod.console.Console(SCREEN_W, SCREEN_H, order="F")
     with tcod.context.new(columns=SCREEN_W, rows=SCREEN_H, tileset=load_font(font),
                           title="RotEngine", vsync=True,
@@ -92,3 +119,4 @@ def main(scenario: str | None = None, play_as: str | None = None, seed: int | No
                 key = translate(event)
                 if key:
                     app.handle_key(key)
+    app.close()

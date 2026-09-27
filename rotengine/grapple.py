@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from . import combat, perception, physics
+from . import combat, perception, physics, training
 from .dice import check, p_success
 
 if TYPE_CHECKING:
@@ -137,7 +137,9 @@ def grab(sim: "Sim", c: "Creature", target: "Creature", what: str = "torso") -> 
         return GRAB_MS
     c.exert(0.3)
     defense = combat.defense_against(sim, c, target, "melee")
-    roll = check(sim.rng, grab_skill(c, target, what, unaware=defense is None))
+    skill = grab_skill(c, target, what, unaware=defense is None)
+    roll = check(sim.rng, skill)
+    training.practice(sim, c, "wrestling", skill, roll.success)
     perception.emit_noise(sim, c, c.pos, "struggle")
     with sim.focus(c.pos, target.pos):
         missed = not roll.success
@@ -275,11 +277,14 @@ def _contest(sim: "Sim", c: "Creature", t: "Creature", resist: int | None = None
     cold doesn't resist."""
     if not t.conscious:
         return True
-    mine = check(sim.rng, max(c.stat("ST"), c.skill("wrestling")) + 2 + (3 if c.rear_hold else 0) + bonus
-                 - c.action_penalty("melee"))
+    target = (max(c.stat("ST"), c.skill("wrestling")) + 2 + (3 if c.rear_hold else 0) + bonus
+              - c.action_penalty("melee"))
+    mine = check(sim.rng, target)
     base = resist if resist is not None else max(t.stat("ST"), t.skill("wrestling"))
     theirs = check(sim.rng, base - t.action_penalty("melee") - t.choked)
-    return mine.success and (not theirs.success or mine.margin > theirs.margin)
+    won = mine.success and (not theirs.success or mine.margin > theirs.margin)
+    training.practice(sim, c, "wrestling", target, won)
+    return won
 
 
 def _technique(c: "Creature") -> int:
@@ -535,6 +540,7 @@ def struggle(sim: "Sim", c: "Creature") -> int | None:
                + (2 if pinned else 0))
     base = _weapon_resist(c) if on_weapon else max(c.stat("ST"), c.skill("wrestling"))
     mine = check(sim.rng, base - penalty)
+    training.practice(sim, c, "wrestling", base - penalty, mine.success)
     theirs = check(sim.rng, max(g.stat("ST"), g.skill("wrestling")) + (0 if on_weapon else 2))
     perception.emit_noise(sim, c, c.pos, "struggle")
     with sim.focus(c.pos, g.pos):

@@ -440,11 +440,86 @@ The AI:
 | `status` at `status_at` | Tear gas makes you choke: −3 attack, −2 defense, −3 Perception |
 | `immune_trait` | A gas mask |
 
+## 7⅞. Roguelike mode (`mapgen.py`, `roguelike.py`, `training.py`)
+
+**A run** (`roguelike.Run`) is one character going down through a dungeon's floors. Each
+floor is its own `Sim`, generated fresh; the player creature object is carried down
+(`Sim.adopt`) with its body, gear, skills and statuses intact, and the clock carries on
+(`Sim(start_time=...)`). A bleed you didn't stop upstairs is still bleeding downstairs.
+Floors run with `endless` (nothing ends until the player does), `healing` (bodies
+recover over time) and stealth rules (`start_aware` off: guards stand posts or walk
+beats and don't know you're there). The way down is a floor material with
+`"exit": "down"`: stand on it and press `>`. The run autosaves on every new floor and
+on quitting (or closing the window); death deletes the save.
+
+**The Black Site** (`data/core/dungeon/`): six floors under a harbour warehouse, from
+dock crews with pistols and knives (warehouse), through site security (offices), to
+contractors with rifles, grenades and steel doors (bunker), to the Commander in the
+vault. Take him down (dead or out cold) to win. Playable: the operative, John Wick,
+the assassin, the speedster, a soldier, a street tough, the Hulk.
+
+**Map generation.** A floor is a grid of cells (18×12); some get a prefab room, maybe
+mirrored or rotated. Rooms are joined by a minimum spanning tree plus a few loops,
+with corridors carved through rock by A* (reusing corridors is cheaper), from door
+slot to door slot. Used slots become doors (by `door_chance`) or open doorways; unused
+ones stay wall. The player starts in one room and the exit goes in the room farthest
+away by corridor. A boss floor puts the boss's prefab in first and starts you as far
+from it as possible. Any level where a spawn, item or the exit can't be walked to is
+thrown away and rolled again. Everything is deterministic from the seed
+(`python -m rotengine mapgen --depth 4 --seed 9` prints one).
+
+| Content type | What it is |
+|---|---|
+| `prefab` | A room drawn in ASCII (`rows`), with `tags` (which floors use it), `weight`, optional `depth`, `palettes` and an inline `legend`. Needs door slots on its outer wall, not in corners. `mirror` / `rotate` default true. |
+| `palette` | Character → tile. Besides `fill` / `floor`: `door_slot`, `monster` (`"level"` or a group id, with `chance`), `item` (same), `exit`. The shared `rooms` palette gives `d` door slot, `M` someone, `I` loot, `E` exit spot, `c` furniture, `g` fencing. |
+| `monster_group` / `item_group` | Weighted `entries` (`creature` / `item`, `weight`, optional `depth: [a, b]`). |
+| `dungeon` | `name`, `description`, `characters` (who you can play), and `floors`: each with `depth: [a, b]`, `name`, `size`, `rooms`, `loops`, `prefab_tags`, `ambient_light`, `door_chance`, `door` / `doorway` / `rock` / `corridor` / `exit_floor` tiles, `monsters` and `items` (`group`, `extra` count), `patrol_chance`, and on the last floor `final` and `boss` (`creature`, `prefab_tag`). |
+
+**Recovery** (`Body.recover`, every second, on `healing` floors). Compressed a long way
+from real life but in the same order: trauma (HP) comes back at 0.06% of max HP per
+second at CON 10, about half an hour from nothing; blood returns at 0.02%/s, but only
+once all bleeding has stopped; a crippled (not broken) limb works again when its
+damage fades; a **splinted** break knits in 30 minutes of game time, and an unsplinted
+one never does; brain damage and lost parts are permanent. Enemies you knocked out
+recover too, and wake up. `R` rests in 10-second steps until you're as good as you'll
+get, someone comes into view or grows suspicious, you hear something, or an hour
+passes.
+
+**Medicine** is ordinary items with a `use` block: `effects` (and `fail_effects` if a
+`skill` roll with `mod` fails), `time_ms`, a `needs` condition with `needs_text`, and
+`keep` if it isn't used up. The Black Site has field dressings (first aid +2, stops
+external bleeding), painkillers (`painkillers` status: pain ×0.4 for 20 minutes),
+splints (first aid, 20 s: splints the worst break), adrenaline (+10 stamina, pain ×0.7
+and +1 to attacks for 2 minutes), trauma kits (self-surgery at first aid −4 for a
+minute: the only fix for internal bleeding; a botched job cuts you) and blood bags
+(+30% blood). New effect ops `splint`, `restore_stamina`; new values `bleeding`,
+`internal_bleeding`, `blood`, `fractures` (unsplinted); status `pain_mult`.
+
+**Skill growth** (`training.practice`). Rolling a skill when it matters teaches you:
+`2 × (1 − p)` points for a success, half that for a failure, where `p` is the chance
+you had. A sure thing (95%+) or a hopeless one (under 2%) teaches nothing. A level
+costs `5 × (1 + levels above 10)`, so 10→11 takes a few fights and 17→18 a career.
+Hooked into attack rolls, grabs, holds and struggles, throwing, first aid, medicine
+and stealth (each time someone looks your way and you stay hidden). Only the player
+(and templates with `"learns": true`) keep score. `@` shows your skills and progress.
+
+**Saving.** The whole `Run` is pickled (content included, so a save plays the same
+even if the data files change) with a version number; a save from another version is
+refused with a message, not a crash. Grenade fuses are scheduled as a
+`functools.partial` of a module-level function so they pickle too.
+
+**Inventory** (`i`): wield, wear (8 s) or take off armor, use, throw, drop. `a` goes
+straight to medicine. `g` takes a live grenade first, and otherwise asks what to pick
+up if there's a choice; weapons go to your hands if they're free, everything else to
+your pack.
+
 ## 8. Modding reference
 
 ### Content types
 `material`, `damage_type`, `body_plan`, `item`, `trait`, `status`, `power`, `creature`,
-`tile_legend`. Each object needs `type` and `id`. A later mod replaces objects by id.
+`skill`, `gas`, `tile_legend`, and for the roguelike `prefab`, `palette`,
+`monster_group`, `item_group`, `dungeon` (see 7⅞). Each object needs `type` and `id`. A
+later mod replaces objects by id.
 
 ### Inheritance
 ```json
@@ -506,9 +581,11 @@ def ignite(args, ctx): ...
 3. **More physics (done).** See section 7¾ above. Next for it: fluids (water, fuel,
    blood pools), heat and burns through walls, carrying items in the world (crates,
    barrels), vehicles.
-4. **Roguelike mode.** Map generation from JSON prefabs (CDDA-style mapgen with
-   palettes), levels and biomes, save/load, persistent injuries and medicine, skill
-   growth through use.
+4. **Roguelike mode (first milestone done).** See section 7⅞. Next for it: more
+   dungeons and floor themes, multi-storey prefabs (z-levels inside a floor), going
+   back up to earlier floors, companions, NPC factions that fight each other,
+   carrying weight and ammunition, surgery and medicine on others, hunger and sleep
+   over longer runs, a world map linking dungeons.
 5. **Breadth.** More body plans (quadrupeds, robots with component "organs", swarms),
    a library of powers (telekinesis, shields, time dilation, possession), energy
    weapons, and ammo types with armor divisors.

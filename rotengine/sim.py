@@ -31,11 +31,11 @@ CARDIAC_ARREST_HYPOXIA = 0.5   # brain damage per second with no circulation (~3
 
 class Sim:
     def __init__(self, content: Content, world: World, seed: int | None = None,
-                 echo: Callable[[str], None] | None = None):
+                 echo: Callable[[str], None] | None = None, start_time: int = 0):
         self.content = content
         self.world = world
         self.rng = random.Random(seed)
-        self.time = 0
+        self.time = start_time  # a roguelike run's clock carries on from level to level
         self.creatures: list[Creature] = []
         self.items: list[tuple[Pos, Item]] = []  # things lying on the ground
         self.lines: list[str] = []
@@ -46,6 +46,8 @@ class Sim:
         self.echo = echo
         self.ambient_light = 1.0
         self.start_aware = True  # new arrivals know where their enemies are (arena fights)
+        self.healing = False     # bodies recover over time (roguelike mode; arena fights are too short)
+        self.endless = False     # roguelike: the world runs on as long as a player lives
         self._light: tuple[int, float, list] | None = None
         self.fighting = True  # False during the aftermath: nobody left to fight
         self._queue: list[tuple[int, int, int]] = []  # (time, seq, uid); uid -1 = world tick
@@ -57,7 +59,7 @@ class Sim:
         self.fields = physics.Fields(self)     # fire and gas
         self._events: dict[int, Callable[[], None]] = {}  # timed events (fuses), by negative id
         self._event_ids = itertools.count(2)
-        heapq.heappush(self._queue, (TICK_MS, next(self._seq), -1))
+        heapq.heappush(self._queue, (start_time + TICK_MS, next(self._seq), -1))
 
     # -- bookkeeping -------------------------------------------------------
     def log(self, msg: str, private_to: int | None = None) -> None:
@@ -93,6 +95,23 @@ class Sim:
         self.creatures.append(c)
         self._by_uid[c.uid] = c
         self._schedule(c, self.time + int(self.rng.randint(0, 300) / c.tempo))
+        return c
+
+    def adopt(self, c: Creature, pos: Pos) -> Creature:
+        """Bring a creature from another level into this one (the player
+        going downstairs): same body, gear and skills, fresh knowledge."""
+        c.uid = len(self._by_uid)
+        c.pos = c.post = pos
+        c.awareness, c.known_bodies = {}, set()
+        c.target = c.aim_target = c.investigate = None
+        c.grappling = c.grappled_by = c.hold = None
+        c.statuses.pop("grappled", None)
+        c.statuses.pop("grappling", None)
+        c.choked, c.defenses_in_window, c.defense_until = 0, 0, 0
+        c.patrol, c.alarmed = [], False
+        self.creatures.append(c)
+        self._by_uid[c.uid] = c
+        self._schedule(c, self.time + 1)
         return c
 
     def _schedule(self, c: Creature, at: int) -> None:
@@ -286,6 +305,10 @@ class Sim:
         "timeout". A downed or stunned player is simply skipped past."""
         if self.awaiting is not None:
             return "player"
+        if self.endless:  # roguelike: nothing ends until you do
+            alive = lambda: any(c.controller == "player" and not c.dead for c in self.creatures)  # noqa: E731
+            stop = self._loop(alive, self.time + max_ms, stop_for_player=True)
+            return "player" if stop == "player" else "over" if not alive() else "timeout"
         stop = self._loop(lambda: len(self.active_teams()) > 1, max_ms, stop_for_player=True)
         if stop == "player":
             return "player"
@@ -396,6 +419,14 @@ class Sim:
         if c.dead:
             return
         resting = not c.conscious or not self.fighting
+        if self.endless and not resting:  # roguelike: catching your breath between fights
+            if c.controller == "player":
+                resting = not any(perception.aware_of(o, c) for o in self.enemies_of(c))
+            else:
+                resting = perception.state(c) != "combat"
+        if self.healing:
+            for what in c.body.recover(1, c.stat("CON")):
+                self.log(f"{c.name}'s {what}.", private_to=c.uid if c.controller == "player" else None)
         c.stamina = min(c.max_stamina, c.stamina + (0.5 if resting else 0.1) * c.tempo)
         if (c.statuses.get("unconscious", 0) is None and second % 5 == 0 and self._can_wake(c)
                 and check(self.rng, c.stat("CON")).success):

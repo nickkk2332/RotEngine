@@ -1,0 +1,185 @@
+[
+ {
+  "type": "dungeon",
+  "id": "black_site",
+  "name": "The Black Site",
+  "description": "Under a harbour warehouse, a private military contractor runs a prison nobody admits exists. Someone you care about is at the bottom of it. Get down there.",
+  "floors": [
+   {
+    "depth": [
+     1,
+     1
+    ],
+    "name": "the harbour warehouse",
+    "size": [
+     76,
+     38
+    ],
+    "rooms": [
+     6,
+     8
+    ],
+    "loops": [
+     1,
+     2
+    ],
+    "prefab_tags": [
+     "warehouse"
+    ],
+    "ambient_light": 0.3,
+    "door_chance": 0.5,
+    "monsters": {
+     "group": "dock_crew",
+     "extra": [
+      1,
+      2
+     ]
+    },
+    "items": {
+     "group": "loot_street",
+     "extra": [
+      2,
+      3
+     ]
+    }
+   },
+   {
+    "depth": [
+     2,
+     3
+    ],
+    "name": "the front offices",
+    "size": [
+     76,
+     38
+    ],
+    "rooms": [
+     7,
+     9
+    ],
+    "loops": [
+     1,
+     3
+    ],
+    "prefab_tags": [
+     "office"
+    ],
+    "ambient_light": 0.55,
+    "door_chance": 0.7,
+    "monsters": {
+     "group": "site_security",
+     "extra": [
+      2,
+      3
+     ]
+    },
+    "items": {
+     "group": "loot_office",
+     "extra": [
+      2,
+      4
+     ]
+    }
+   },
+   {
+    "depth": [
+     4,
+     5
+    ],
+    "name": "the bunker",
+    "size": [
+     76,
+     38
+    ],
+    "rooms": [
+     7,
+     9
+    ],
+    "loops": [
+     1,
+     2
+    ],
+    "prefab_tags": [
+     "bunker"
+    ],
+    "ambient_light": 0.2,
+    "door_chance": 0.8,
+    "door": {
+     "fill": "steel_door",
+     "floor": "concrete"
+    },
+    "monsters": {
+     "group": "black_site",
+     "extra": [
+      2,
+      4
+     ]
+    },
+    "items": {
+     "group": "loot_military",
+     "extra": [
+      2,
+      3
+     ]
+    }
+   },
+   {
+    "depth": [
+     6,
+     6
+    ],
+    "name": "the vault",
+    "size": [
+     76,
+     38
+    ],
+    "rooms": [
+     5,
+     6
+    ],
+    "loops": [
+     1,
+     2
+    ],
+    "final": true,
+    "prefab_tags": [
+     "bunker",
+     "vault"
+    ],
+    "ambient_light": 0.25,
+    "door_chance": 0.8,
+    "door": {
+     "fill": "steel_door",
+     "floor": "concrete"
+    },
+    "boss": {
+     "creature": "commander",
+     "prefab_tag": "vault"
+    },
+    "monsters": {
+     "group": "black_site",
+     "extra": [
+      3,
+      4
+     ]
+    },
+    "items": {
+     "group": "loot_military",
+     "extra": [
+      1,
+      2
+     ]
+    }
+   }
+  ],
+  "characters": [
+   "operative",
+   "wick",
+   "assassin",
+   "speedster",
+   "soldier",
+   "street_tough",
+   "hulk"
+  ]
+ }
+]

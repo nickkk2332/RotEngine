@@ -1,4 +1,4 @@
-"""Command line: python -m rotengine {play,arena,list,validate} ..."""
+"""Command line: python -m rotengine {play,run,arena,mapgen,list,validate} ..."""
 from __future__ import annotations
 
 import argparse
@@ -8,6 +8,8 @@ import sys
 
 from . import arena
 from .content import DATA_DIR, ContentError, load_content
+from .mapgen import MapgenError
+from .roguelike import SaveError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,6 +37,20 @@ def main(argv: list[str] | None = None) -> int:
                     help="mono (default) reads best; square fonts give square map tiles")
     pl.add_argument("--mod", action="append", default=[], help="load an extra mod")
 
+    r = sub.add_parser("run", help="roguelike mode in a window: start a new run, or continue yours")
+    r.add_argument("--as", dest="play_as", default=None,
+                   help="who goes down (a creature id, e.g. operative, wick, hulk)")
+    r.add_argument("--seed", type=int, default=None)
+    r.add_argument("--continue", dest="resume", action="store_true", help="continue your saved run")
+    r.add_argument("--font", default="mono", choices=("mono", "mono-large", "square12", "square16"))
+    r.add_argument("--mod", action="append", default=[], help="load an extra mod")
+
+    m = sub.add_parser("mapgen", help="print a generated dungeon floor as ASCII")
+    m.add_argument("--dungeon", default="black_site")
+    m.add_argument("--depth", type=int, default=1)
+    m.add_argument("--seed", type=int, default=None)
+    m.add_argument("--mod", action="append", default=[])
+
     sub.add_parser("list", help="list scenarios")
     v = sub.add_parser("validate", help="load and validate all content")
     v.add_argument("--mod", action="append", default=[])
@@ -48,6 +64,22 @@ def main(argv: list[str] | None = None) -> int:
                 print("The windowed game needs python-tcod: pip install tcod", file=sys.stderr)
                 return 1
             play(args.scenario, args.play_as, args.seed, args.font, args.mod)
+        elif args.cmd == "run":
+            try:
+                from .ui.app import main as play
+            except ImportError:
+                print("The windowed game needs python-tcod: pip install tcod", file=sys.stderr)
+                return 1
+            play(None, None, args.seed, args.font, args.mod,
+                 run=("continue" if args.resume else args.play_as or "operative"))
+        elif args.cmd == "mapgen":
+            from . import mapgen
+            content = load_content(args.mod)
+            seed = args.seed if args.seed is not None else random.randrange(1_000_000)
+            plan = mapgen.generate(content, args.dungeon, args.depth, seed)
+            print(f"{plan.name} (depth {plan.depth}, seed {seed}): {len(plan.rooms)} rooms, "
+                  f"{len(plan.spawns)} people, {len(plan.items)} items. @ start, > exit, M someone")
+            print(plan.ascii(content))
         elif args.cmd == "list":
             for p in sorted((DATA_DIR / "scenarios").glob("*.json")):
                 s = arena.load_scenario(p)
@@ -65,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{scenario.get('name', scenario['id'])} - seed {seed}")
                 arena.run_once(scenario, content, seed, echo=print, show_map=args.map,
                                aftermath=args.aftermath, play_by_play=not args.summary)
-    except (ContentError, arena.ScenarioError) as e:
+    except (ContentError, arena.ScenarioError, MapgenError, SaveError) as e:
         print(e, file=sys.stderr)
         return 1
     return 0

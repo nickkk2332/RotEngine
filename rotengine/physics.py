@@ -20,11 +20,12 @@ until they hit something, and hitting something hurts.
 """
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from . import combat, perception
+from . import combat, perception, training
 from .dice import Dice, check
 
 if TYPE_CHECKING:
@@ -295,19 +296,22 @@ def explode(sim: "Sim", pos: "Pos", spec: dict, source: "Creature | None" = None
 def arm(sim: "Sim", item: "Item", fuse_ms: int, source: "Creature | None") -> None:
     """Start an explosive's fuse. It goes off wherever the item is by then:
     on the floor, in someone's hand, or in their pocket."""
-    def boom() -> None:
-        pos = item_position(sim, item)
-        if pos is None:
-            return
-        sim.items[:] = [(p, i) for p, i in sim.items if i is not item]
-        for c in sim.creatures:
-            if item in c.carried:
-                c.carried.remove(item)
-            if c.wielded is item:
-                c.wielded = None
-        explode(sim, pos, item.data["explosive"], source, item.name)
     item.armed = True
-    sim.schedule_event(sim.time + fuse_ms, boom)
+    # a partial of a module-level function (not a closure), so a saved game can pickle it
+    sim.schedule_event(sim.time + fuse_ms, functools.partial(_detonate, sim, item, source))
+
+
+def _detonate(sim: "Sim", item: "Item", source: "Creature | None") -> None:
+    pos = item_position(sim, item)
+    if pos is None:
+        return
+    sim.items[:] = [(p, i) for p, i in sim.items if i is not item]
+    for c in sim.creatures:
+        if item in c.carried:
+            c.carried.remove(item)
+        if c.wielded is item:
+            c.wielded = None
+    explode(sim, pos, item.data["explosive"], source, item.name)
 
 
 def item_position(sim: "Sim", item: "Item") -> "Pos | None":
@@ -340,6 +344,7 @@ def throw_item(sim: "Sim", c: "Creature", item: "Item", target: "Pos") -> "Pos":
     combat.face(c, target)
     skill = c.skill("throwing") - c.action_penalty("ranged") + combat.range_penalty(dist)
     roll = check(sim.rng, skill)
+    training.practice(sim, c, "throwing", skill, roll.success)
     with sim.focus(c.pos, target):
         sim.log(f"{c.name} throws {item.the}{'' if roll.success else ' (a bad throw)'}.")
     land = target

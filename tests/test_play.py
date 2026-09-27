@@ -341,3 +341,67 @@ def test_hold_menu_shows_moves_and_odds():
     assert guard.body.part("r_arm").destroyed
     assert p.wielded is not None and "right arm" in p.wielded.name
     assert p.grappling is None and g.mode == "play"
+
+
+# -- roguelike mode ------------------------------------------------------------------
+def run_app(tmp_path, seed=11):
+    """Main menu -> new run -> the operative, saving to a temp dir."""
+    app = new_app()
+    app.save_path = tmp_path / "run.sav"
+    app.handle_key("c")
+    assert "who goes down?" in screen_text(app)
+    app.handle_key("a")  # the operative
+    return app, app.screen
+
+
+def test_a_run_from_the_menu(tmp_path):
+    from rotengine.creature import Item
+    app, g = run_app(tmp_path)
+    run = g.run
+    assert run is not None and app.save_path.exists()
+    text = screen_text(app)
+    assert "Floor 1/6" in text and run.plan.name in text
+    # inventory, medicine, character sheet
+    g.player.carried.append(Item(run.content.get("item", "bandage")))
+    app.handle_key("i")
+    assert "Inventory" in screen_text(app) and "field dressing" in screen_text(app)
+    app.handle_key("esc")
+    app.handle_key("a")
+    assert "Use what?" in screen_text(app) and "not bleeding" in screen_text(app)
+    app.handle_key("esc")
+    app.handle_key("@")
+    text = screen_text(app)
+    assert "Skills" in text and "stealth" in text and "Wounds" in text
+    app.handle_key("x")
+    assert g.mode == "play"
+    # take the stairs: a new floor, and an autosave
+    g.player.pos = (*run.plan.exit, 0)
+    app.handle_key(">")
+    assert run.depth == 2 and g.sim is run.sim and "Floor 2/6" in screen_text(app)
+    # save and quit, then continue
+    app.handle_key("esc")
+    app.handle_key("y")
+    assert "Continue your run" in screen_text(app)
+    app.handle_key("d")
+    assert app.screen.run is not None and app.screen.run.depth == 2
+    assert app.screen.run.player.name == run.player.name
+
+
+def test_resting_heals_and_dying_ends_the_run(tmp_path):
+    app, g = run_app(tmp_path, seed=12)
+    p = g.player
+    for c in g.sim.creatures:  # nobody around to interrupt
+        if c is not p:
+            c.dead = True
+    p.body.hp = p.max_hp / 2
+    t0 = g.sim.time
+    app.handle_key("R")
+    assert p.hp > p.max_hp / 2 and g.sim.time > t0 and "Rested" in g.notice
+    from rotengine import combat
+    combat.kill(g.sim, p, "test")
+    g.status = g.sim.advance()
+    g._on_turn()
+    assert g.mode == "over" and "Dead" in screen_text(app)
+    assert not app.save_path.exists()  # permadeath
+    app.handle_key("enter")
+    assert "Continue your run" not in screen_text(app)

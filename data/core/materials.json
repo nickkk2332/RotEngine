@@ -24,5 +24,10 @@
   {"type": "material", "id": "door_open", "name": "wooden door", "glyph": "'", "transparent": true, "hp": 20, "dr": 3, "door": "door", "flammable": 1.0},
   {"type": "material", "id": "locked_door", "name": "locked door", "glyph": "+", "solid": true, "hp": 25, "dr": 4, "door": "door_open", "locked": true, "flammable": 1.0, "breachable": true},
   {"type": "material", "id": "steel_door", "name": "steel door", "glyph": "+", "solid": true, "hp": 80, "dr": 15, "door": "steel_door_open"},
-  {"type": "material", "id": "steel_door_open", "name": "steel door", "glyph": "'", "transparent": true, "hp": 80, "dr": 15, "door": "steel_door"}
+  {"type": "material", "id": "steel_door_open", "name": "steel door", "glyph": "'", "transparent": true, "hp": 80, "dr": 15, "door": "steel_door"},
+  {"type": "material", "id": "stairwell_down", "name": "stairwell down", "glyph": "#", "floor_glyph": ">",
+   "solid": true, "hp": 500, "dr": 50, "exit": "down",
+   "//": "A floor you can leave the level by (roguelike mode): stand on it and press >."},
+  {"type": "material", "id": "rubble", "name": "rubble", "glyph": "%", "floor_glyph": ";",
+   "solid": true, "hp": 60, "dr": 6}
 ]

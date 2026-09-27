@@ -21,5 +21,7 @@
   {"type": "status", "id": "crushed_windpipe", "name": "crushed windpipe",
    "description": "The airway is crushed shut. Unconscious in moments, dead in under two minutes without a tracheotomy.",
    "prevents_action": true, "knocks_out": true, "hypoxia": 1.0, "death_text": "crushed windpipe"},
-  {"type": "status", "id": "choking", "name": "choking", "attack_mod": -3, "defense_mod": -2, "perception_mod": -3}
+  {"type": "status", "id": "choking", "name": "choking", "attack_mod": -3, "defense_mod": -2, "perception_mod": -3},
+  {"type": "status", "id": "painkillers", "name": "on painkillers", "pain_mult": 0.4, "perception_mod": -1},
+  {"type": "status", "id": "stimulated", "name": "adrenaline", "pain_mult": 0.7, "attack_mod": 1, "move_mult": 1.1}
 ]

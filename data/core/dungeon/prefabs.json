@@ -1,0 +1,378 @@
+[
+ {
+  "type": "prefab",
+  "id": "wh_hall",
+  "tags": [
+   "warehouse"
+  ],
+  "palettes": [
+   "rooms",
+   "warehouse"
+  ],
+  "weight": 12,
+  "rows": [
+   "BBBBBBdBBBBBBBBB",
+   "B..............B",
+   "B.cc..M...cc...B",
+   "B.cc......cc..Id",
+   "d..............B",
+   "B......*.......B",
+   "B.cc..I...cc...B",
+   "B.cc......cc.M.B",
+   "B..............B",
+   "BBBBBBBBdBBBBBBB"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "wh_loading",
+  "tags": [
+   "warehouse"
+  ],
+  "palettes": [
+   "rooms",
+   "warehouse"
+  ],
+  "weight": 10,
+  "rows": [
+   "BBBBBBdBBBBBBB",
+   "B............B",
+   "B.cc.cc.cc...B",
+   "d.........M..d",
+   "B..I.........B",
+   "B.cc.cc.cc.*.B",
+   "B............B",
+   "BBBBBdBBBBBBBB"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "wh_office",
+  "tags": [
+   "warehouse"
+  ],
+  "palettes": [
+   "rooms",
+   "warehouse",
+   "wood_floor"
+  ],
+  "weight": 10,
+  "rows": [
+   "BBBdBBBB",
+   "B______B",
+   "B_M__I_d",
+   "B______B",
+   "B__*___B",
+   "BBBBdBBB"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "wh_cage",
+  "tags": [
+   "warehouse"
+  ],
+  "palettes": [
+   "rooms",
+   "warehouse"
+  ],
+  "weight": 10,
+  "rows": [
+   "BBBBdBBBBB",
+   "B........B",
+   "B.gggggg.B",
+   "B.gI..Ig.d",
+   "B.gg.ggg.B",
+   "B...M....B",
+   "BBBBBBBdBB"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "wh_break",
+  "tags": [
+   "warehouse"
+  ],
+  "palettes": [
+   "rooms",
+   "warehouse",
+   "wood_floor"
+  ],
+  "weight": 10,
+  "rows": [
+   "BBBBdBBBB",
+   "B_______B",
+   "B_M___I_d",
+   "B__cc___B",
+   "B_______B",
+   "BBBBBBBBB"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "of_cubicles",
+  "tags": [
+   "office"
+  ],
+  "palettes": [
+   "rooms",
+   "office",
+   "wood_floor"
+  ],
+  "weight": 12,
+  "rows": [
+   "|||||||d||||||||",
+   "|______________|",
+   "|_|__|__|__|___|",
+   "|_|M_|__|I_|___|",
+   "d______________d",
+   "|______*_______|",
+   "|_|__|__|__|___|",
+   "|_|I_|M_|__|___|",
+   "|______________|",
+   "||||||d|||||||||"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "of_manager",
+  "tags": [
+   "office"
+  ],
+  "palettes": [
+   "rooms",
+   "office",
+   "wood_floor"
+  ],
+  "weight": 10,
+  "rows": [
+   "|||d|||||",
+   "|_______|",
+   "|_cc____|",
+   "|_M__I__d",
+   "|_______|",
+   "|___*___|",
+   "|||||||||"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "of_meeting",
+  "tags": [
+   "office"
+  ],
+  "palettes": [
+   "rooms",
+   "office",
+   "wood_floor"
+  ],
+  "weight": 10,
+  "rows": [
+   "||||d|||||||",
+   "|__________|",
+   "|__cccccc__|",
+   "d__cccccc_M|",
+   "|__cccccc__|",
+   "|___I______d",
+   "||||||||||||"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "of_restroom",
+  "tags": [
+   "office"
+  ],
+  "palettes": [
+   "rooms",
+   "office"
+  ],
+  "weight": 10,
+  "rows": [
+   "||||d|||",
+   "|......|",
+   "|.|..|.|",
+   "|.|..|.d",
+   "|..I...|",
+   "||||||||"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "of_server",
+  "tags": [
+   "office",
+   "bunker"
+  ],
+  "palettes": [
+   "rooms",
+   "office"
+  ],
+  "weight": 10,
+  "rows": [
+   "||||d|||||",
+   "|........|",
+   "|.HH.HH..|",
+   "|.HH.HH.Md",
+   "|........|",
+   "|.HH.HH.I|",
+   "|....*...|",
+   "||||||||||"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "bk_barracks",
+  "tags": [
+   "bunker"
+  ],
+  "palettes": [
+   "rooms",
+   "bunker"
+  ],
+  "weight": 12,
+  "rows": [
+   "######d#######",
+   "#............#",
+   "#.c.c.c.c.c..#",
+   "#..M....M....d",
+   "#............#",
+   "#.c.c.c.c.c.I#",
+   "#.....*......#",
+   "#####d########"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "bk_armory",
+  "tags": [
+   "bunker"
+  ],
+  "palettes": [
+   "rooms",
+   "bunker"
+  ],
+  "weight": 6,
+  "rows": [
+   "####d#####",
+   "#........#",
+   "#.HIH.HIH#",
+   "#........d",
+   "#.HIH.HMH#",
+   "#........#",
+   "##########"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "bk_cells",
+  "tags": [
+   "bunker"
+  ],
+  "palettes": [
+   "rooms",
+   "bunker"
+  ],
+  "weight": 10,
+  "rows": [
+   "####d###########",
+   "#..............#",
+   "#.HH=HH=HH=HH..#",
+   "#.H.IH..H..H.M.d",
+   "#.H..H.IH..H...#",
+   "#.HHSHHSHHSHH..#",
+   "#..............#",
+   "#.....M....*...#",
+   "##########d#####"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "bk_generator",
+  "tags": [
+   "bunker"
+  ],
+  "palettes": [
+   "rooms",
+   "bunker"
+  ],
+  "weight": 10,
+  "rows": [
+   "#####d######",
+   "#..........#",
+   "#.HHHH..cc.#",
+   "#.HHHH..cc.d",
+   "#....M.....#",
+   "d.I........#",
+   "#.....*....#",
+   "############"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "vault_command",
+  "tags": [
+   "vault"
+  ],
+  "palettes": [
+   "rooms",
+   "bunker"
+  ],
+  "weight": 10,
+  "rows": [
+   "#######dd#######",
+   "#..............#",
+   "#.HH........HH.#",
+   "#.H..........H.#",
+   "#....cccccc....#",
+   "#....cccccc..I.#",
+   "#.H..........H.#",
+   "#.HH...*....HH.#",
+   "#......I.......#",
+   "################"
+  ],
+  "boss_room": true
+ },
+ {
+  "type": "prefab",
+  "id": "closet",
+  "tags": [
+   "warehouse",
+   "office",
+   "bunker"
+  ],
+  "palettes": [
+   "rooms"
+  ],
+  "weight": 5,
+  "rows": [
+   "##d###",
+   "#....#",
+   "#.I..d",
+   "#....#",
+   "######"
+  ]
+ },
+ {
+  "type": "prefab",
+  "id": "junction",
+  "tags": [
+   "warehouse",
+   "office",
+   "bunker"
+  ],
+  "palettes": [
+   "rooms"
+  ],
+  "weight": 6,
+  "rows": [
+   "###d###",
+   "#.....#",
+   "#.#.#.#",
+   "d..M..d",
+   "#.#.#.#",
+   "#.....#",
+   "###d###"
+  ]
+ }
+]

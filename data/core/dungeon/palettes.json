@@ -1,0 +1,90 @@
+[
+ {
+  "type": "palette",
+  "id": "rooms",
+  "//": "Markers every prefab can use: d door slot, M someone might be here, I loot, E a spot for the way down, c crates/furniture, g cage fencing.",
+  "tiles": {
+   "d": {
+    "door_slot": true,
+    "fill": "concrete",
+    "floor": "concrete"
+   },
+   "M": {
+    "floor": "concrete",
+    "monster": "level",
+    "chance": 0.7
+   },
+   "I": {
+    "floor": "concrete",
+    "item": "level",
+    "chance": 0.6
+   },
+   "E": {
+    "floor": "concrete",
+    "exit": true
+   },
+   "c": {
+    "fill": "wood",
+    "floor": "concrete"
+   },
+   "g": {
+    "fill": "grate",
+    "floor": "concrete"
+   }
+  }
+ },
+ {
+  "type": "palette",
+  "id": "warehouse",
+  "tiles": {
+   "d": {
+    "door_slot": true,
+    "fill": "brick",
+    "floor": "concrete"
+   }
+  }
+ },
+ {
+  "type": "palette",
+  "id": "office",
+  "tiles": {
+   "d": {
+    "door_slot": true,
+    "fill": "drywall",
+    "floor": "concrete"
+   }
+  }
+ },
+ {
+  "type": "palette",
+  "id": "bunker",
+  "tiles": {
+   "d": {
+    "door_slot": true,
+    "fill": "concrete",
+    "floor": "concrete"
+   }
+  }
+ },
+ {
+  "type": "palette",
+  "id": "wood_floor",
+  "//": "Markers standing on wooden floor.",
+  "tiles": {
+   "M": {
+    "floor": "wood",
+    "monster": "level",
+    "chance": 0.7
+   },
+   "I": {
+    "floor": "wood",
+    "item": "level",
+    "chance": 0.6
+   },
+   "c": {
+    "fill": "wood",
+    "floor": "wood"
+   }
+  }
+ }
+]

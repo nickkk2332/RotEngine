@@ -28,6 +28,15 @@ from dataclasses import dataclass, field
 # damage-type and body-part bleed multipliers.
 BLEED_SCALE = 0.6
 
+# Recovery (roguelike mode, where time passes between fights). Compressed a
+# long way from real life, but in the same order: bleeding has to stop
+# before blood comes back, trauma fades over half an hour or so at CON 10,
+# a splinted break knits in half an hour of game time, an unsplinted one
+# never does, and nothing grows back.
+HEAL_PER_S = 0.0006     # fraction of max HP per second at CON 10
+BLOOD_PER_S = 0.02      # % of blood volume per second once bleeding has stopped
+FRACTURE_HEAL_S = 1800  # seconds for a splinted break to knit
+
 
 @dataclass
 class PartState:
@@ -39,6 +48,8 @@ class PartState:
     fractured: bool = False
     destroyed: bool = False
     note: str = ""          # what happened to it, in words ("neck snapped", "arm cut off")
+    splinted: bool = False  # a break that's been set: less pain, and it heals
+    knit: float = 0.0       # seconds a splinted break has had to heal
 
     @property
     def name(self) -> str:
@@ -105,7 +116,8 @@ class Body:
         return sum(tag in p.tags for p in self.parts.values())
 
     def fractures(self) -> int:
-        return sum(p.fractured for p in self.parts.values())
+        """Breaks that hurt: a splinted one mostly doesn't."""
+        return sum(p.fractured and not p.splinted for p in self.parts.values())
 
     @property
     def total_bleed(self) -> float:
@@ -208,6 +220,37 @@ class Body:
 
     def heal(self, amount: float) -> None:
         self.hp = min(self.max_hp, self.hp + amount)
+
+    def recover(self, seconds: float, con: int = 10) -> list[str]:
+        """Time passing: trauma fades, blood comes back once the bleeding
+        has stopped, splinted breaks knit. Returns what finished healing."""
+        healed = []
+        rate = HEAL_PER_S * max(0.5, con / 10) * seconds
+        self.hp = min(self.max_hp, self.hp + self.max_hp * rate)
+        if self.total_bleed < 0.01:
+            self.bleed_rate = self.internal_bleed = 0.0
+            if self.blood >= 50:
+                self.blood = min(100.0, self.blood + BLOOD_PER_S * seconds)
+        mh = self.max_hp
+        for p in self.parts.values():
+            if p.destroyed:
+                continue
+            if p.fractured and p.splinted:
+                p.knit += seconds
+                if p.knit >= FRACTURE_HEAL_S:
+                    p.fractured = p.splinted = False
+                    p.knit, p.note = 0.0, ""
+                    cap = p.data.get("fracture_at", 1.0) * mh * 0.9
+                    p.damage, p.counted = min(p.damage, cap), min(p.counted, cap)
+                    healed.append(f"{p.name} has knit")
+            if not p.fractured:
+                p.damage = max(0.0, p.damage - mh * rate * 2)
+                p.counted = max(0.0, p.counted - mh * rate * 2)
+                cripple_at = p.data.get("cripple_at")
+                if p.crippled and cripple_at is not None and p.damage <= mh * cripple_at:
+                    p.crippled = False
+                    healed.append(f"{p.name} works again")
+        return healed
 
     def summary(self) -> str:
         hurt = []

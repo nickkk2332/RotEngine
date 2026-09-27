@@ -4,9 +4,12 @@ A simulation-first ASCII roguelike combat engine. It takes its freedom of approa
 Dishonored and Deus Ex, its brutal and unfair bodies from GURPS, Dwarf Fortress and
 RimWorld, and its modding from CDDA's JSON and EOCs.
 
-Right now it's an **arena**: pick a scenario (or build a custom fight), pick who you
-play, and fight it out in an ASCII window. The same engine also runs headless to
-batch-simulate fights for balance. See [docs/DESIGN.md](docs/DESIGN.md) for the
+There are two ways to play: the **arena** (pick a scenario or build a custom fight,
+pick who you play, fight it out) and **roguelike mode**: take a character down six
+generated floors of a black site, carrying every wound with you, patching yourself
+up with whatever medicine you find, getting better at what you practise, with one
+life and one save. The same engine also runs headless to batch-simulate fights for
+balance. See [docs/DESIGN.md](docs/DESIGN.md) for the
 architecture, the rules, and the roadmap.
 
 ## Playing
@@ -27,10 +30,12 @@ architecture, the rules, and the roadmap.
 | `B` / `c` | smash a wall, door or window / close a door (then a direction); walk into doors to open them |
 | `v` | show where visible enemies are looking |
 | `p` | powers |
-| `<` `>` | stairs up / down |
+| `<` `>` | stairs up / down; `>` on a stairwell (yellow `>`) takes you to the next floor |
 | `[` `]` | view the level below / above |
 | `x` | look: inspect terrain and anyone's wounds |
-| `?` / `Esc` | help / quit to menu |
+| `i` / `a` / `@` | inventory (wield, wear, use, throw, drop) / use medicine / character sheet (skills, wounds) |
+| `R` | rest: heal until something happens (roguelike) |
+| `?` / `Esc` | help / quit to menu (a run is saved) |
 
 Time only moves when you act, and it moves by the cost of what you do in *your*
 time: play the speedster and everyone else is in slow motion. When the fight ends
@@ -41,7 +46,9 @@ you can watch the next two minutes play out: who bleeds out, who comes to.
 
 ```bash
 pip install -e ".[ui,dev]"        # numpy, python-tcod, pytest
-python -m rotengine play          # the game: pick a scenario and who to play
+python -m rotengine play          # the game: scenarios, custom fights, roguelike runs
+python -m rotengine run --as operative   # straight into a new roguelike run (--continue to resume)
+python -m rotengine mapgen --depth 4     # print a generated floor
 python -m rotengine play wick_vs_thugs --as "John Wick"   # straight into a fight
 python -m rotengine list          # scenarios
 python -m rotengine arena hulk_vs_squad --map            # watch one fight (+120s aftermath);
@@ -68,6 +75,7 @@ python -m pytest
 | **JSON content** | Materials, bodies, items, creatures, traits, statuses and powers, with `copy-from`/`relative`/`extend`/`delete` inheritance and mods with dependencies. |
 | **Effect scripting** | EOC-style effect lists with conditions, values and hooks (`on_damaged`, `on_second`, `on_kill`). Python plugins can register new ops. |
 | **Arena** | ASCII scenario maps, seeded and deterministic runs, batch win rates. |
+| **Roguelike** | Six floors generated from JSON room prefabs and palettes (warehouse, offices, bunker, the vault and its Commander). Wounds, blood and broken bones carry between floors; bodies heal slowly, splinted breaks knit, unsplinted ones don't. Medicine items (dressings, splints, painkillers, adrenaline, trauma kits, blood bags). Skills improve with use. Autosave, permadeath. |
 
 ## Current balance (100 seeded runs each)
 
@@ -89,8 +97,10 @@ corpse, dropped weapons by their item glyph. Terrain: `#` concrete/brick, `|` dr
 
 ```
 rotengine/   dice, content, body, creature, world, effects, combat, grapple, physics,
-             perception, actions, sim, ai, arena, render, fov; ui/ (python-tcod)
-data/core/   base game content (JSON)
+             perception, actions, sim, ai, arena, render, fov, mapgen, roguelike,
+             training; ui/ (python-tcod)
+data/core/   base game content (JSON); data/core/dungeon/ the roguelike's prefabs,
+             palettes, spawn groups and dungeon
 data/mods/   mods: a folder with modinfo.json + JSON files
 data/scenarios/  arena maps
 docs/DESIGN.md   architecture, rules, modding reference, roadmap
