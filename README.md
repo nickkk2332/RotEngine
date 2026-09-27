@@ -4,15 +4,38 @@ A simulation-first ASCII roguelike combat engine. It takes its freedom of approa
 Dishonored and Deus Ex, its brutal and unfair bodies from GURPS, Dwarf Fortress and
 RimWorld, and its modding from CDDA's JSON and EOCs.
 
-This is the foundation: the rules core, the world model and the modding layer, run
-headless through an **arena** that plays out scenarios and batch-runs them for balance.
-There's no interactive UI yet. See [docs/DESIGN.md](docs/DESIGN.md) for the architecture,
-the rules, and the roadmap to a playable game.
+Right now it's an **arena**: pick a scenario (or build a custom fight), pick who you
+play, and fight it out in an ASCII window. The same engine also runs headless to
+batch-simulate fights for balance. See [docs/DESIGN.md](docs/DESIGN.md) for the
+architecture, the rules, and the roadmap.
+
+## Playing
+
+| Key | |
+|---|---|
+| arrows / numpad / `hjklyubn` | move; walk into an enemy to hit them |
+| `f` | attack menu: target, attack, hit location, feint, aim, with the real odds |
+| `F` | quick attack with the best option (steps closer if out of reach) |
+| `Tab` | cycle target |
+| `.` / numpad 5 | wait half a second (of your own time) |
+| `r` / `m` / `z` / `g` | reload / first aid / drop prone or stand / pick up a weapon |
+| `p` | powers |
+| `<` `>` | stairs up / down |
+| `[` `]` | view the level below / above |
+| `x` | look: inspect terrain and anyone's wounds |
+| `?` / `Esc` | help / quit to menu |
+
+Time only moves when you act, and it moves by the cost of what you do in *your*
+time: play the speedster and everyone else is in slow motion. When the fight ends
+you can watch the next two minutes play out: who bleeds out, who comes to.
+`--font mono-large` for bigger text, `--font square16` for classic square tiles.
 
 ## Quick start
 
 ```bash
-pip install -e ".[dev]"          # numpy + pytest; add [ui] later for python-tcod
+pip install -e ".[ui,dev]"        # numpy, python-tcod, pytest
+python -m rotengine play          # the game: pick a scenario and who to play
+python -m rotengine play wick_vs_thugs --as "John Wick"   # straight into a fight
 python -m rotengine list          # scenarios
 python -m rotengine arena hulk_vs_squad --map            # watch one fight (+120s aftermath);
                                                           # prints its seed, replay with --seed N

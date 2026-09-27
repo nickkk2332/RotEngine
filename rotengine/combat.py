@@ -160,6 +160,13 @@ class AttackPlan:
     value: float               # expected injury per second of the attacker's time
     aim_first: bool = False    # spend time aiming before this shot
     time_ms: int = 1000
+    p_hit: float = 0.0         # chance the attack roll succeeds
+    p_defended: float = 0.0    # chance the target's defense then stops it
+    injury: float = 0.0        # expected injury per landed hit at that location
+
+    @property
+    def p_land(self) -> float:
+        return self.p_hit * (1 - self.p_defended)
 
 
 def base_skill(sim: "Sim", attacker: "Creature", target: "Creature", attack: dict,
@@ -190,10 +197,25 @@ def friendly_in_line(sim: "Sim", shooter: "Creature", target: "Creature") -> boo
     return False
 
 
+def attack_plans(sim: "Sim", attacker: "Creature", target: "Creature",
+                 surprise: bool = False, skill_bonus: int = 0, damage_bonus: int = 0,
+                 allow_aim: bool = True) -> list[AttackPlan]:
+    """Every way the attacker could go at the target right now: attack x
+    hit location x feint level x (aim first or not), with odds. The AI takes
+    the best; the player's attack menu shows them all."""
+    return [AttackPlan(*c) for c in _candidates(sim, attacker, target, surprise, skill_bonus,
+                                                 damage_bonus, allow_aim)]
+
+
 def best_attack_plan(sim: "Sim", attacker: "Creature", target: "Creature",
                      surprise: bool = False, skill_bonus: int = 0,
                      damage_bonus: int = 0, allow_aim: bool = True) -> AttackPlan | None:
-    best: AttackPlan | None = None
+    best = max(_candidates(sim, attacker, target, surprise, skill_bonus, damage_bonus, allow_aim),
+               key=lambda c: c[6], default=None)
+    return AttackPlan(*best) if best else None
+
+
+def _candidates(sim, attacker, target, surprise, skill_bonus, damage_bonus, allow_aim):
     if allow_aim and (attacker.shock or sim.enemies_within(attacker, 2)):
         allow_aim = False  # just hurt, or someone's in your face: no time to line up a shot
     body = target.body
@@ -242,9 +264,7 @@ def best_attack_plan(sim: "Sim", attacker: "Creature", target: "Creature",
                     p_def = p_success(defense - dec) if defense is not None else 0.0
                     hits = min(shots, 1 + max(0.0, skill - 10.5) / attack.get("recoil", 1)) if shots > 1 else 1
                     value = p_hit * (1 - p_def) * hits * exp / (ms / 1000)
-                    if best is None or value > best.value:
-                        best = AttackPlan(attack, item, dice, skill, loc, dec, value, aim, int(ms))
-    return best
+                    yield (attack, item, dice, skill, loc, dec, value, aim, int(ms), p_hit, p_def, exp)
 
 
 # -- resolution ------------------------------------------------------------

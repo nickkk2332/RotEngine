@@ -1,0 +1,192 @@
+"""Interactive play: the sim pauses for the player, and the UI drives it.
+UI tests run headlessly on tcod consoles (skipped if tcod isn't installed)."""
+import pytest
+
+from rotengine import actions, arena
+from rotengine.sim import Sim
+from rotengine.world import World
+
+
+def open_arena(content, seed=0, w=14, h=9):
+    world = World(content.all("material"), w, h, 1)
+    for y in range(h):
+        for x in range(w):
+            world.set_floor((x, y, 0), "concrete")
+    return Sim(content, world, seed)
+
+
+# -- engine side: advance / player_act -------------------------------------------
+def test_sim_pauses_for_the_player(content):
+    sim = open_arena(content)
+    me = sim.spawn("street_tough", "a", (2, 4, 0))
+    sim.spawn("street_tough", "b", (12, 4, 0))
+    me.controller = "player"
+    assert sim.advance() == "player" and sim.awaiting is me
+    assert sim.advance() == "player"  # asking again doesn't skip the turn
+    t0 = sim.time
+    sim.player_act(actions.step_dir(sim, me, 1, 0))
+    assert me.pos == (3, 4, 0)
+    assert sim.advance() == "player" and sim.time > t0
+
+
+def test_player_tempo_means_more_turns(content):
+    sim = open_arena(content)
+    fast = sim.spawn("speedster", "a", (2, 4, 0))
+    sim.spawn("street_tough", "b", (12, 4, 0))
+    fast.controller = "player"
+    sim.advance()
+    t0 = sim.time
+    sim.player_act(actions.wait(sim, fast, 1000))  # one second of *his* time
+    sim.advance()
+    assert sim.time - t0 == 125
+
+
+def test_stunned_player_is_skipped(content):
+    sim = open_arena(content)
+    me = sim.spawn("street_tough", "a", (2, 4, 0))
+    sim.spawn("street_tough", "b", (12, 4, 0))
+    me.controller = "player"
+    sim.advance()
+    sim.apply_status(me, "stunned", 3000)
+    sim.player_act(500)
+    assert sim.advance() == "player"
+    assert sim.time >= me.statuses.get("stunned", 0)  # only asked again once the stun wore off
+
+
+def test_attack_plans_match_best(content):
+    from rotengine import combat
+    sim = open_arena(content)
+    wick = sim.spawn("wick", "a", (2, 4, 0))
+    thug = sim.spawn("thug", "b", (8, 4, 0))
+    plans = combat.attack_plans(sim, wick, thug)
+    best = combat.best_attack_plan(sim, wick, thug)
+    assert max(p.value for p in plans) == pytest.approx(best.value)
+    assert all(0 <= p.p_land <= 1 for p in plans)
+
+
+# -- UI side (headless) ---------------------------------------------------------------
+tcod = pytest.importorskip("tcod")
+
+
+def screen_text(app) -> str:
+    from rotengine.ui.theme import SCREEN_H, SCREEN_W
+    con = tcod.console.Console(SCREEN_W, SCREEN_H, order="F")
+    app.render(con)
+    return str(con)
+
+
+def new_app(scenario=None, who=None, seed=5):
+    from rotengine.ui.app import App
+    app = App()
+    if scenario:
+        app.start(scenario, who, seed)
+    return app
+
+
+def test_key_translation():
+    import tcod.event as ev
+    from rotengine.ui.keys import translate
+    down = ev.KeyDown(scancode=ev.Scancode.UP, sym=ev.KeySym.UP, mod=ev.Modifier.NONE)
+    assert translate(down) == "up"
+    kp = ev.KeyDown(scancode=ev.Scancode.KP_7, sym=ev.KeySym.KP_7, mod=ev.Modifier.NONE)
+    assert translate(kp) == "upleft"
+    assert translate(ev.TextInput(text="F")) == "F"
+    assert translate(ev.TextInput(text="7")) is None  # numpad digits come as KeyDown
+
+
+def test_menus_lead_into_a_fight():
+    from rotengine.ui.game import GameScreen
+    app = new_app()
+    assert "Play a scenario" in screen_text(app)
+    app.handle_key("a")
+    assert "Choose a scenario" in screen_text(app)
+    names = [label for label, _ in app.screen.items]
+    app.handle_key(chr(ord("a") + names.index("John Wick vs thugs")))
+    assert "who do you play?" in screen_text(app)
+    app.handle_key("a")  # John Wick is listed first
+    assert isinstance(app.screen, GameScreen)
+    assert "John Wick" in screen_text(app)
+
+
+def test_every_scenario_and_mode_renders():
+    for path in sorted((arena.DATA_DIR / "scenarios").glob("*.json")):
+        app = new_app(path.stem, None)
+        app.handle_key("a")
+        g = app.screen
+        for keys in (["?"], ["x", "right", "esc"], ["[", "]"], ["f", "enter"], ["esc"], ["p"]):
+            for k in keys:
+                app.handle_key(k)
+            screen_text(app)
+            g.mode = "play"
+        assert g.player.name in screen_text(app)
+
+
+def test_attack_menu_executes_an_attack():
+    app = new_app("wick_vs_thugs", "wick")
+    g = app.screen
+    t0 = g.sim.time
+    app.handle_key("f")
+    app.handle_key("enter")
+    assert g.mode == "attack" and "to hit" in screen_text(app)
+    best = g.menu.plan()
+    assert best is not None
+    app.handle_key("enter")
+    assert g.mode in ("play", "over")
+    assert g.sim.time > t0
+    assert any(line.split("] ", 1)[1].startswith("John Wick") for line in g.sim.lines)
+
+
+def test_a_whole_fight_to_the_aftermath():
+    app = new_app("wick_vs_thugs", "wick", seed=5)
+    g = app.screen
+    for _ in range(300):
+        if g.mode == "over":
+            break
+        w = g.player.wielded
+        app.handle_key("r" if w is not None and w.ammo == 0 else "F" if g._visible_enemies() else ".")
+    assert g.mode == "over"
+    assert "Fight over" in screen_text(app)
+    app.handle_key("a")
+    assert g.mode == "summary" and "120s later" in screen_text(app)
+    app.handle_key("q")
+    assert "Play a scenario" in screen_text(app)
+
+
+def test_quick_attack_closes_distance_for_melee():
+    app = new_app("speedster_vs_squad", "speedster", seed=3)
+    g = app.screen
+    start = g.player.pos
+    app.handle_key("F")
+    assert g.player.pos != start or g.player.target is None or g.mode == "over"
+
+
+def test_powers_menu_uses_a_power():
+    app = new_app("hulk_vs_squad", "hulk", seed=1)
+    g = app.screen
+    app.handle_key("p")
+    assert "thunderclap" in screen_text(app)
+    stamina = g.player.stamina
+    app.handle_key("a")  # thunderclap, whoever is near
+    assert g.player.stamina < stamina or "fizzles" in "".join(g.sim.lines)
+
+
+def test_custom_fight_starts():
+    from rotengine.ui.game import GameScreen
+    from rotengine.ui.menus import CustomFight
+    app = new_app()
+    app.handle_key("b")
+    assert isinstance(app.screen, CustomFight)
+    app.handle_key("down")    # 'you'
+    app.handle_key("right")
+    app.handle_key("enter")
+    assert isinstance(app.screen, GameScreen)
+    assert app.screen.player.controller == "player"
+
+
+def test_quit_to_menu():
+    app = new_app("street_fight", None)
+    app.handle_key("a")
+    app.handle_key("esc")
+    assert "Leave this fight?" in screen_text(app)
+    app.handle_key("y")
+    assert "Play a scenario" in screen_text(app)

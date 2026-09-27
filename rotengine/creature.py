@@ -69,6 +69,7 @@ class Creature:
         self.death_cause: str | None = None
         self.next_time = 0
         self.target: Creature | None = None
+        self.controller = "ai"  # or "player": the sim pauses for input on its turns
         self.cooldowns: dict[str, float] = {}  # power id -> world time it's ready again
 
     def __repr__(self) -> str:

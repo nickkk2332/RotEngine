@@ -280,11 +280,15 @@ def ignite(args, ctx): ...
 
 ## 9. Roadmap
 
-1. **Playable arena (next).** A python-tcod frontend: map with z-level switching (`<` `>`),
-   message log, look/inspect (body status per part), and a player-controlled creature
-   with an action menu: attack option → location → feint levels, showing hit odds from
-   `p_success`. An arena setup screen to pick creatures and teams and place them on a
-   map. The player is just a creature whose `take_turn` waits for input.
+1. **Playable arena (done).** `rotengine/ui/` (python-tcod). The player is a creature
+   with `controller = "player"`: `Sim.advance()` runs the world until that creature's
+   turn and returns, the UI turns a keypress into a function from
+   `rotengine/actions.py` (the same verbs the AI uses) and hands its cost to
+   `Sim.player_act()`. The attack menu lists `combat.attack_plans()`, the same options
+   the AI planner scores. Field of view (`rotengine/fov.py`) uses combat's line of
+   sight. UI screens are plain objects (`render(console)`, `on_key(key)`), so the tests
+   drive them headlessly. Next for it: only log what the player can see (the log is
+   omniscient), a map editor, and saving arena setups.
 2. **Stealth and perception.** Facing, awareness states (unaware → suspicious → alert),
    light and noise propagation over the voxel grid, and takedowns (the `surprise` path
    already exists). Grappling, chokes and non-lethal options.

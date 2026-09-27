@@ -11,8 +11,7 @@ from __future__ import annotations
 import heapq
 from typing import TYPE_CHECKING, Callable
 
-from . import combat, effects
-from .dice import check
+from . import actions, combat, effects
 
 if TYPE_CHECKING:
     from .creature import Creature
@@ -24,18 +23,15 @@ STUCK_WAIT_MS = 2000
 AIM_HOLD_MS = 300
 MAX_AIM_HOLDS = 4
 FAILED_PATH_MEMORY_MS = 2000
-MOVE_EXERTION = 0.05
-FIRST_AID_MS = 5000
 
 
 def take_turn(sim: "Sim", c: "Creature") -> int:
     enemies = sim.enemies_of(c)
     visible = [e for e in enemies if sim.world.has_los(c.pos, e.pos)]
     if c.has_status("prone") and not _good_firing_position(sim, c, enemies, visible):
-        if c.body.functional_with("stance") or not c.body.total_with("stance"):
-            del c.statuses["prone"]
-            sim.log(f"{c.name} gets back up.")
-            return 1000
+        cost = actions.stand_up(sim, c)
+        if cost is not None:
+            return cost
     if not visible:
         aid = _first_aid(sim, c, allies=not enemies)
         if aid is not None:
@@ -49,24 +45,24 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
     combat.face(c, target.pos)
 
     for power in c.powers:
-        if c.stamina < power.get("cost", {}).get("stamina", 0):
+        if actions.power_blocked(sim, c, power):
             continue
-        if c.cooldowns.get(power["id"], 0) > sim.time:
-            continue
-        ctx = effects.Ctx(sim, c, target)
-        if effects.test(power.get("ai_condition", False), ctx):
-            return combat.use_power(sim, c, power, target)
+        if effects.test(power.get("ai_condition", False), effects.Ctx(sim, c, target)):
+            return actions.use_power(sim, c, power, target)
 
-    item = c.wielded
-    if item is not None and item.ammo == 0 and "reload_ms" in item.data:
-        item.ammo = item.data["magazine"]
-        sim.log(f"{c.name} reloads the {item.name}.")
-        return item.data["reload_ms"]
+    if c.wielded is not None and c.wielded.ammo == 0:
+        cost = actions.reload(sim, c)
+        if cost is not None:
+            return cost
+    if c.wielded is None and c.template.get("equipment", {}).get("wield"):
+        cost = actions.pick_up(sim, c)  # replace a lost weapon (the Hulk doesn't want a rifle)
+        if cost is not None:
+            return cost
 
     plan = combat.best_attack_plan(sim, c, target)
     if plan is not None and plan.value > 0:
         c.aim_holds = 0
-        return combat.resolve_attack(sim, c, target, plan)
+        return actions.attack(sim, c, target, plan)
 
     # Lined up a shot and a teammate stepped into it: keep the aim and give
     # them a moment to clear rather than walking off and starting over.
@@ -94,7 +90,7 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
         step = _step_toward(sim, c, target.pos, sees, kind="los")  # a leap may open up from there
     if step is None:
         return STUCK_WAIT_MS  # nothing reachable: hold position and re-think later
-    return _move(sim, c, step)
+    return actions.step(sim, c, step) or STUCK_WAIT_MS
 
 
 def _good_firing_position(sim: "Sim", c: "Creature", enemies: list["Creature"],
@@ -103,12 +99,6 @@ def _good_firing_position(sim: "Sim", c: "Creature", enemies: list["Creature"],
     long as nobody is close enough to stomp on you."""
     return (bool(visible) and _has_usable_ranged(c)
             and all(sim.distance(c, e) > 3 for e in enemies))
-
-
-def _move(sim: "Sim", c: "Creature", step: "Pos") -> int:
-    sim.move_creature(c, step)
-    c.exert(MOVE_EXERTION)
-    return 2000 if c.has_status("prone") else int(1000 / c.move_per_second)
 
 
 def _first_aid(sim: "Sim", c: "Creature", allies: bool) -> int | None:
@@ -125,20 +115,8 @@ def _first_aid(sim: "Sim", c: "Creature", allies: bool) -> int | None:
     patient = max(patients, key=lambda a: (a.body.bleed_rate, -sim.distance(c, a)))
     if patient is not c and not sim.in_melee_reach(c.pos, patient.pos):
         step = _step_toward(sim, c, patient.pos)
-        return _move(sim, c, step) if step is not None else None
-    bleed = patient.body.bleed_rate
-    severity = 3 if bleed < 0.5 else 0 if bleed < 1.5 else -3  # pressure on a nick vs. an artery
-    skill = c.skill("first_aid") + severity - c.action_penalty() - (2 if patient is c else 0)
-    r = check(sim.rng, skill)
-    who = "their own wounds" if patient is c else f"{patient.name}'s wounds"
-    if r.success:
-        before = patient.body.bleed_rate
-        patient.body.bleed_rate = 0.0 if r.critical or r.margin >= 5 else before * 0.25
-        note = " The internal bleeding needs a surgeon." if patient.body.internal_bleed > 0.01 else ""
-        sim.log(f"{c.name} binds {who} (bleeding {before:.1f} -> {patient.body.bleed_rate:.1f}%/s).{note}")
-    else:
-        sim.log(f"{c.name} fumbles with {who}.")
-    return FIRST_AID_MS
+        return actions.step(sim, c, step) if step is not None else None
+    return actions.bandage(sim, c, patient)
 
 
 def _has_usable_ranged(c: "Creature") -> bool:

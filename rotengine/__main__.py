@@ -1,4 +1,4 @@
-"""Command line: python -m rotengine {arena,list,validate} ..."""
+"""Command line: python -m rotengine {play,arena,list,validate} ..."""
 from __future__ import annotations
 
 import argparse
@@ -27,13 +27,28 @@ def main(argv: list[str] | None = None) -> int:
                    help="seconds to keep simulating after the fight (default: scenario's, 120)")
     a.add_argument("--mod", action="append", default=[], help="load an extra mod")
 
+    pl = sub.add_parser("play", help="play in a window (needs: pip install tcod)")
+    pl.add_argument("scenario", nargs="?", help="jump straight into a scenario")
+    pl.add_argument("--as", dest="play_as", help="who to play in that scenario (e.g. 'John Wick')")
+    pl.add_argument("--seed", type=int, default=None)
+    pl.add_argument("--font", default="mono", choices=("mono", "mono-large", "square12", "square16"),
+                    help="mono (default) reads best; square fonts give square map tiles")
+    pl.add_argument("--mod", action="append", default=[], help="load an extra mod")
+
     sub.add_parser("list", help="list scenarios")
     v = sub.add_parser("validate", help="load and validate all content")
     v.add_argument("--mod", action="append", default=[])
 
     args = ap.parse_args(argv)
     try:
-        if args.cmd == "list":
+        if args.cmd == "play":
+            try:
+                from .ui.app import main as play
+            except ImportError:
+                print("The windowed game needs python-tcod: pip install tcod", file=sys.stderr)
+                return 1
+            play(args.scenario, args.play_as, args.seed, args.font, args.mod)
+        elif args.cmd == "list":
             for p in sorted((DATA_DIR / "scenarios").glob("*.json")):
                 s = arena.load_scenario(p)
                 print(f"{p.stem:<22} {s.get('name', '')} - {s.get('description', '')}")

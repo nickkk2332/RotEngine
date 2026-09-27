@@ -13,7 +13,10 @@ dev = ["pytest>=8"]
 rotengine = "rotengine.__main__:main"
 
 [tool.setuptools]
-packages = ["rotengine"]
+packages = ["rotengine", "rotengine.ui"]
+
+[tool.setuptools.package-data]
+"rotengine.ui" = ["fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -45,6 +45,7 @@ class Sim:
         self._by_uid: dict[int, Creature] = {}
         self._terrain_dirty = False
         self.path_failures: dict[tuple, int] = {}  # AI memo of recently failed searches
+        self.awaiting: Creature | None = None  # player-controlled creature whose turn it is
         heapq.heappush(self._queue, (TICK_MS, next(self._seq), -1))
 
     # -- bookkeeping -------------------------------------------------------
@@ -229,8 +230,35 @@ class Sim:
         """Run until one team is left standing. Returns the winner, or None for
         a timeout / mutual wipe."""
         self._loop(lambda: len(self.active_teams()) > 1, max_ms)
+        return self.winner()
+
+    def winner(self) -> str | None:
         teams = self.active_teams()
         return next(iter(teams)) if len(teams) == 1 else None
+
+    # -- interactive play --------------------------------------------------
+    def advance(self, max_ms: int = 180_000) -> str:
+        """Run the world until a player-controlled creature needs a decision.
+        Returns "player" (see self.awaiting), "over" (one side left) or
+        "timeout". A downed or stunned player is simply skipped past."""
+        if self.awaiting is not None:
+            return "player"
+        stop = self._loop(lambda: len(self.active_teams()) > 1, max_ms, stop_for_player=True)
+        if stop == "player":
+            return "player"
+        return "over" if len(self.active_teams()) <= 1 else "timeout"
+
+    def player_act(self, own_ms: int) -> None:
+        """The awaited player creature took an action costing own_ms of its
+        own time. (Actions come from rotengine.actions, like the AI's.)"""
+        c = self.awaiting
+        if c is None:
+            raise RuntimeError("no player turn is pending")
+        self.awaiting = None
+        c.shock = 0
+        self._schedule(c, self.time + max(1, int(own_ms / c.tempo)))
+        if self._terrain_dirty:
+            self._settle()
 
     def run_aftermath(self, seconds: float) -> None:
         """Keep the clock running after the fight: the wounded bleed out, pass
@@ -238,11 +266,12 @@ class Sim:
         self.fighting = False
         self._loop(lambda: True, self.time + int(seconds * 1000))
 
-    def _loop(self, keep_going: Callable[[], bool], until_ms: int) -> None:
+    def _loop(self, keep_going: Callable[[], bool], until_ms: int,
+              stop_for_player: bool = False) -> str:
         while self._queue and keep_going():
-            at, _, uid = self._queue[0]
+            at, seq, uid = self._queue[0]
             if at > until_ms:
-                return
+                return "time"
             heapq.heappop(self._queue)
             self.time = at
             if uid == -1:
@@ -252,12 +281,31 @@ class Sim:
                 c = self._by_uid[uid]
                 if c.dead or c.next_time != at:
                     continue
-                own_ms = self._act(c)
+                if stop_for_player and c.controller == "player":
+                    own_ms = self._pre_act(c)
+                    if own_ms is None:  # conscious and able: hand over to the player
+                        heapq.heappush(self._queue, (at, seq, uid))
+                        self.awaiting = c
+                        return "player"
+                else:
+                    own_ms = self._act(c)
                 self._schedule(c, at + max(1, int(own_ms / c.tempo)))
             if self._terrain_dirty:
                 self._settle()
+        return "done"
 
     def _act(self, c: Creature) -> int:
+        cost = self._pre_act(c)
+        if cost is not None:
+            return cost
+        cost = ai.take_turn(self, c)
+        c.shock = 0
+        return cost
+
+    def _pre_act(self, c: Creature) -> int | None:
+        """The start of any creature's turn, AI or player: statuses run out,
+        and the stunned, the fading and the exhausted lose their turn.
+        Returns the own-ms cost if the turn is used up, else None."""
         self.expire_statuses(c)
         if not c.can_act:
             ends = [t for sid, t in c.statuses.items()
@@ -273,9 +321,7 @@ class Sim:
         if c.stamina <= -c.max_stamina / 2:
             combat.knock_out(self, c, "from exhaustion")
             return 1000
-        cost = ai.take_turn(self, c)
-        c.shock = 0
-        return cost
+        return None
 
     def _tick(self) -> None:
         """One second of physiology for everyone."""
