@@ -552,8 +552,7 @@ class GameScreen(Screen):
             y += 1
             con.print(x + 1, y, f"{t.name} · {self.sim.distance(p, t)} tiles"[:w - 1], fg=RED)
             y += 1
-            con.print(x + 1, y, self._condition(t)[:w - 1], fg=WHITE)
-            y += 1
+            y += print_wrapped(con, x + 1, y, w - 1, self._condition(t), fg=WHITE, max_lines=2)
             weapon = t.wielded.name if t.wielded else "unarmed"
             con.print(x + 1, y, weapon[:w - 1], fg=GREY)
             y += 1
