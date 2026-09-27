@@ -19,7 +19,7 @@ import random
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
-from . import actions, ai, combat, effects, perception
+from . import actions, ai, combat, effects, perception, physics
 from .content import Content
 from .creature import Creature, Item
 from .dice import Dice, check
@@ -54,6 +54,9 @@ class Sim:
         self._terrain_dirty = False
         self.path_failures: dict[tuple, int] = {}  # AI memo of recently failed searches
         self.awaiting: Creature | None = None  # player-controlled creature whose turn it is
+        self.fields = physics.Fields(self)     # fire and gas
+        self._events: dict[int, Callable[[], None]] = {}  # timed events (fuses), by negative id
+        self._event_ids = itertools.count(2)
         heapq.heappush(self._queue, (TICK_MS, next(self._seq), -1))
 
     # -- bookkeeping -------------------------------------------------------
@@ -95,6 +98,12 @@ class Sim:
     def _schedule(self, c: Creature, at: int) -> None:
         c.next_time = at
         heapq.heappush(self._queue, (at, next(self._seq), c.uid))
+
+    def schedule_event(self, at: float, fn: Callable[[], None]) -> None:
+        """Run fn at world time `at` (a grenade's fuse, say)."""
+        eid = -next(self._event_ids)
+        self._events[eid] = fn
+        heapq.heappush(self._queue, (int(at), next(self._seq), eid))
 
     def apply_status(self, c: Creature, status_id: str, duration_ms: float) -> None:
         """Timed status. 'subjective' statuses (stun, agony) run on the
@@ -229,7 +238,7 @@ class Sim:
                     if dz > 0 and self.world.damage_floor(p, amount()):
                         broken += 1
         if broken:
-            self.log(f"{broken} sections of terrain are torn apart.")
+            self.log(f"{broken} section{'s' if broken != 1 else ''} of terrain {'are' if broken != 1 else 'is'} torn apart.")
             self.terrain_changed()
 
     def _settle(self) -> None:
@@ -311,6 +320,10 @@ class Sim:
             if uid == -1:
                 self._tick()
                 heapq.heappush(self._queue, (at + TICK_MS, next(self._seq), -1))
+            elif uid < -1:
+                fn = self._events.pop(uid, None)
+                if fn is not None:
+                    fn()
             else:
                 c = self._by_uid[uid]
                 if c.dead or c.next_time != at:
@@ -364,6 +377,8 @@ class Sim:
     def _tick(self) -> None:
         """One second of physiology for everyone."""
         second = self.time // TICK_MS
+        if self.fields.active:
+            self.fields.step()
         for c in self.creatures:
             if c.dead:
                 continue
@@ -372,6 +387,10 @@ class Sim:
 
     def _tick_one(self, c: Creature, second: int) -> None:
         self.expire_statuses(c)
+        if self.fields.active or c.has_status("on_fire"):
+            self.fields.affect(c)
+            if c.dead:
+                return
         perception.decay(self, c)
         self._blood(c, second)
         if c.dead:

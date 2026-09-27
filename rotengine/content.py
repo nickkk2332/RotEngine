@@ -32,6 +32,7 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     "creature": ("name", "stats", "body"),
     "tile_legend": ("tiles",),
     "skill": ("stat",),
+    "gas": (),
 }
 
 _META_KEYS = {"copy-from", "extend", "delete", "relative", "abstract"}

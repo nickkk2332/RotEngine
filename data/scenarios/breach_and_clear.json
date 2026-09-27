@@ -1,0 +1,119 @@
+{
+ "name": "Breach and clear",
+ "description": "A SWAT team against six armed occupants barricaded in a house with wooden walls. Locked front door, steel back door. Grenades, flashbangs, smoke, breaching charges; they have Molotovs. The walls burn.",
+ "start_alert": false,
+ "ambient_light": 0.6,
+ "levels": [
+  [
+   "##########################################",
+   "#,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,#",
+   "#,,,,,,,BBBB=BBBBBBBB=BBBBBBBB=BBBB,,,,,,#",
+   "#,,,,,,,B________W________W_______B,,,,,,#",
+   "#,,,,,,,B________+________W_______=,,,,,,#",
+   "#,,,,,,,=________W________+_______B,,,,,,#",
+   "#,,,,,,,B________W________W_______B,,,,,,#",
+   "#,,,,,,,BWWWW+WWWWWWWW+WWWWWW+WWWWB,,,,,,#",
+   "#,,,,,,,B_______________W_________B,,,,,,#",
+   "#,,,,,,,B__O____________W_____O___B,,,,,,#",
+   "#,,,,,,,L_______________W_________B,,,,,,#",
+   "#,,,,,,,B_______________+_________S,,,,,,#",
+   "#,,,,,,,B__________O____W_________B,,,,,,#",
+   "#,,,,,,,B_______________W_________B,,,,,,#",
+   "#,,,,,,,BBBBBBB=BBBBBBBBBBBB=BBBBBB,,,,,,#",
+   "#,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,#",
+   "##########################################"
+  ]
+ ],
+ "teams": {
+  "swat": [
+   {
+    "creature": "swat",
+    "count": 4,
+    "area": [
+     1,
+     6,
+     5,
+     13,
+     0
+    ]
+   }
+  ],
+  "occupants": [
+   {
+    "creature": "gunman",
+    "at": [
+     12,
+     10,
+     0
+    ],
+    "facing": [
+     -1,
+     0
+    ]
+   },
+   {
+    "creature": "gunman",
+    "at": [
+     20,
+     4,
+     0
+    ],
+    "facing": [
+     0,
+     1
+    ]
+   },
+   {
+    "creature": "gunman",
+    "at": [
+     29,
+     11,
+     0
+    ],
+    "facing": [
+     1,
+     0
+    ]
+   },
+   {
+    "creature": "firebug",
+    "at": [
+     14,
+     4,
+     0
+    ],
+    "facing": [
+     -1,
+     0
+    ]
+   },
+   {
+    "creature": "firebug",
+    "at": [
+     20,
+     11,
+     0
+    ],
+    "facing": [
+     -1,
+     0
+    ]
+   },
+   {
+    "creature": "thug",
+    "at": [
+     30,
+     4,
+     0
+    ],
+    "facing": [
+     0,
+     1
+    ]
+   }
+  ]
+ },
+ "aware_teams": [
+  "swat"
+ ]
+}

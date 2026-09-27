@@ -1,0 +1,7 @@
+[
+  {"type": "gas", "id": "smoke", "name": "smoke", "opacity": 2.5, "spread": 0.15, "decay": 0.03,
+   "rises": true, "description": "Blocks sight when thick. Rises through holes in floors."},
+  {"type": "gas", "id": "tear_gas", "name": "tear gas", "opacity": 0.6, "spread": 0.12, "decay": 0.02,
+   "status": "choking", "status_at": 15, "immune_trait": "gas_mask",
+   "description": "Anyone without a gas mask chokes and weeps while it lasts."}
+]

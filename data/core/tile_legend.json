@@ -14,6 +14,11 @@
     "=": {"fill": "glass", "floor": "concrete"},
     "X": {"fill": "stairs"},
     "x": {"fill": "stairs", "floor": "concrete"},
-    "*": {"fill": "lamp", "floor": "concrete"}
+    "*": {"fill": "lamp", "floor": "concrete"},
+    "W": {"fill": "wood_wall", "floor": "wood"},
+    "+": {"fill": "door", "floor": "wood"},
+    "'": {"fill": "door_open", "floor": "wood"},
+    "L": {"fill": "locked_door", "floor": "wood"},
+    "S": {"fill": "steel_door", "floor": "concrete"}
   }
 }

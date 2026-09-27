@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import tcod.console
 
-from .. import actions, ai, arena, combat, fov, perception
+from .. import actions, ai, arena, combat, fov, perception, physics
 from ..creature import Creature
 from .keys import DIRECTIONS, VI_KEYS
 from .menus import MainMenu, Screen
@@ -38,6 +38,9 @@ HELP = [
     ("G", "grab someone next to you; again to choke (drag by moving)"),
     ("L", "let go"),
     ("w", "swap to your other weapon"),
+    ("t", "throw something (grenade, Molotov...) at a spot"),
+    ("T / P", "hurl the person you're holding / plant a charge on a wall"),
+    ("B / c", "smash a wall or door / close a door (then a direction)"),
     ("v", "show where enemies are looking"),
     ("r", "reload"),
     ("m", "first aid (yourself, or a bleeding ally next to you)"),
@@ -251,6 +254,34 @@ class GameScreen(Screen):
         if key == "v":
             self.show_cones = not self.show_cones
             return None
+        if key == "t":
+            options = actions.throwables(p)
+            if not options:
+                self.notice = "You have nothing to throw."
+                return None
+            if len(options) == 1:
+                return self._start_aim(options[0])
+            self.mode = "throwmenu"
+            return None
+        if key == "T":
+            if p.grappling is None:
+                self.notice = "Grab someone first (G)."
+                return None
+            return self._ask_direction("Hurl them which way?", lambda d: actions.hurl(sim, p, d))
+        if key == "B":
+            return self._ask_direction("Smash which way?", lambda d: actions.smash(sim, p, self._adjacent(d)),
+                                       "Nothing there you can smash.")
+        if key == "c":
+            return self._ask_direction("Close which door?", lambda d: actions.close_door(sim, p, self._adjacent(d)),
+                                       "No open door there (or something's in the way).")
+        if key == "P":
+            charges = [i for i in p.carried if i.data.get("plantable")]
+            if not charges:
+                self.notice = "You have no charges."
+                return None
+            return self._ask_direction("Plant it on which wall?",
+                                       lambda d: actions.plant(sim, p, charges[0], self._adjacent(d)),
+                                       "No wall or door there to plant it on.")
         if key == "m":
             return self._first_aid()
         if key == "z":
@@ -280,6 +311,66 @@ class GameScreen(Screen):
         if key == "esc":
             self.mode = "confirm"
             return None
+        return None
+
+    def _adjacent(self, d: tuple[int, int]) -> "Pos":
+        x, y, z = self.player.pos
+        return (x + d[0], y + d[1], z)
+
+    def _ask_direction(self, prompt: str, act, fail: str = "You can't do that."):
+        self.mode = "dir"
+        self.notice = prompt + " (direction, Esc to cancel)"
+        self._dir_action = (act, fail)
+        return None
+
+    def _key_dir(self, key: str):
+        d = self._direction(key)
+        if key == "esc":
+            self.mode, self.notice = "play", ""
+            return None
+        if d is None:
+            return None
+        act, fail = self._dir_action
+        self.mode = "play"
+        return self._do(act(d), fail)
+
+    def _start_aim(self, item) -> None:
+        self.mode = "aim"
+        self._throwing = item
+        t = self.target
+        self.cursor = t.pos if t is not None and self._sees(t) else self.player.pos
+        self.notice = f"Throw the {item.name} where? (move the cursor, Enter to throw)"
+        return None
+
+    def _key_throwmenu(self, key: str):
+        options = actions.throwables(self.player)
+        if key == "esc":
+            self.mode = "play"
+        elif len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(options):
+            return self._start_aim(options[ord(key) - ord("a")])
+        return None
+
+    def _key_aim(self, key: str):
+        d = self._direction(key)
+        p = self.player
+        if d is not None:
+            x, y, z = self.cursor
+            nxt = (x + d[0], y + d[1], z)
+            if self.sim.world.in_bounds(nxt):
+                self.cursor = nxt
+        elif key in ("tab", "shift-tab"):
+            self._cycle_target(1 if key == "tab" else -1)
+            if self.target is not None:
+                self.cursor = self.target.pos
+        elif key == "esc":
+            self.mode, self.cursor, self.notice = "play", None, ""
+        elif key in ("enter", "t"):
+            target, item = self.cursor, self._throwing
+            self.mode, self.cursor = "play", None
+            rng = physics.throw_range(p, item.data.get("weight", 1))
+            return self._do(actions.throw(self.sim, p, item, target),
+                            f"Too far: you can throw that {rng} tiles." if self.sim.distance_pos(p.pos, target) > rng
+                            else "You can't throw that there.")
         return None
 
     def _first_aid(self):
@@ -525,22 +616,25 @@ class GameScreen(Screen):
                 if not 0 <= x < w.width:
                     continue
                 pos = (x, y, z)
+                bg = None
                 if pos in self.visible:
                     ch, fg = self._tile(pos)
                     fg = self._lit(pos, fg)
+                    ch, fg, bg = self._hazards(pos, ch, fg)
                 elif pos in self.seen:
                     ch, fg = self.seen[pos]
                     fg = dim(fg, 0.4)
                 else:
                     continue
-                con.print(MAP_X + sx, MAP_Y + sy, ch, fg=fg)
+                con.print(MAP_X + sx, MAP_Y + sy, ch, fg=fg, bg=bg)
         if self.show_cones:
             for pos, side in self._cone_tiles().items():
                 self._highlight(con, pos, CONE_FRONT_BG if side == "front" else CONE_SIDE_BG)
         marks: dict = {}
         for pos, item in self.sim.items:
             if pos[2] == z and pos in self.visible:
-                marks[pos[:2]] = (item.data.get("glyph", "("), CYAN, None)
+                marks[pos[:2]] = (item.data.get("glyph", "("), RED if item.armed else CYAN,
+                                  (70, 0, 0) if item.armed else None)
         for layer in ("dead", "down", "up"):
             for c in self.sim.creatures:
                 state = "dead" if c.dead else "up" if c.active else "down"
@@ -561,6 +655,27 @@ class GameScreen(Screen):
             self._highlight(con, t.pos, TARGET_BG)
         if self.cursor is not None:
             self._highlight(con, self.cursor, CURSOR_BG)
+
+    def _hazards(self, pos, ch, fg):
+        """Fire and gas drawn over a visible tile."""
+        x, y, z = pos
+        fields = self.sim.fields
+        heat = float(fields.fire[z, y, x])
+        if heat > 0:
+            flame = YELLOW if heat > 6 else ORANGE if heat > 3 else RED
+            return "^", flame, (60, 12, 0)
+        bg = None
+        smoke = fields.gas.get("smoke")
+        if smoke is not None and smoke[z, y, x] > 3:
+            v = int(min(90, 20 + smoke[z, y, x]))
+            bg = (v, v, v)
+            if smoke[z, y, x] > 30:
+                ch, fg = "░", (170, 170, 170)
+        tear = fields.gas.get("tear_gas")
+        if tear is not None and tear[z, y, x] > 3:
+            v = int(min(80, 15 + tear[z, y, x]))
+            bg = (v, v, v // 4)
+        return ch, fg, bg
 
     def _alert_bg(self, c: Creature):
         """Background on an enemy's glyph: amber = suspicious, red = has seen you."""
@@ -632,8 +747,10 @@ class GameScreen(Screen):
             con.print(x, y, "unarmed", fg=CYAN)
         y += 1
         if p.carried:
-            con.print(x, y, ("also: " + ", ".join(i.name for i in p.carried) + " (w)")[:w], fg=GREY)
-            y += 1
+            from collections import Counter
+            counts = Counter(i.name for i in p.carried)
+            text = "carrying: " + ", ".join(f"{n}" if k == 1 else f"{k}x {n}" for n, k in counts.items())
+            y += print_wrapped(con, x, y, w, text, fg=GREY, max_lines=3)
         if p.aim_target is not None and self.target is not None and p.aim_target == self.target.uid:
             con.print(x, y, f"aimed at {self.target.name}"[:w], fg=CYAN)
             y += 1
@@ -745,7 +862,16 @@ class GameScreen(Screen):
             y += 1
         for ipos, item in self.sim.items:
             if ipos == pos:
-                con.print(x + 1, y, f"a {item.name} on the ground"[:w - 1], fg=CYAN)
+                live = " (LIVE)" if item.armed else ""
+                con.print(x + 1, y, f"a {item.name}{live}"[:w - 1], fg=RED if item.armed else CYAN)
+                y += 1
+        if self.sim.fields.burning(pos) > 0:
+            con.print(x + 1, y, "on fire", fg=ORANGE)
+            y += 1
+        for gas_id in self.sim.fields.gas:
+            conc = self.sim.fields.concentration(gas_id, pos)
+            if conc > 3:
+                con.print(x + 1, y, f"{self.content.get('gas', gas_id)['name']} ({conc:.0f})"[:w - 1], fg=GREY)
                 y += 1
         if pos not in self.visible:
             con.print(x + 1, y, "(remembered, not in sight)", fg=DARK)
@@ -799,11 +925,14 @@ class GameScreen(Screen):
 
     def _render_hints(self, con) -> None:
         hints = {
-            "play": "move/bump · f attack · F quick · s sneak · G grab/choke · L let go · w swap · v cones · ? help",
+            "play": "move/bump · f attack · F quick · t throw · s sneak · G grab/choke · L let go · w swap · ? help",
             "target": "Tab/arrows: choose target · Enter: attack options · Esc: back",
             "attack": "↑↓ location · ←→ feint · Space aim · < > attack · Enter go · Esc back",
             "powers": "letter: use on your target · Esc: back",
             "look": "move the cursor · [ ] change level · Esc: done",
+            "aim": "move the cursor · Tab: jump to a target · Enter: throw · Esc: cancel",
+            "dir": "pick a direction · Esc: cancel",
+            "throwmenu": "letter: choose · Esc: cancel",
         }
         con.print(0, con.height - 1, hints.get(self.mode, "")[:con.width], fg=DARK)
 
@@ -846,6 +975,22 @@ class GameScreen(Screen):
         if plan is not None:
             con.print(x + 2, y + h - 2, f"skill {plan.skill} · takes {plan.time_ms / 1000:.1f}s of your time"
                       + (" (aim, then fire)" if plan.aim_first else ""), fg=GREY)
+
+    def _render_throwmenu(self, con) -> None:
+        options = actions.throwables(self.player)
+        box(con, 6, 6, 50, 4 + len(options), "Throw what?")
+        for i, it in enumerate(options):
+            con.print(8, 8 + i, f"{chr(ord('a') + i)}  {it.name}", fg=WHITE)
+
+    def _render_aim(self, con) -> None:
+        p, item = self.player, self._throwing
+        dist = self.sim.distance_pos(p.pos, self.cursor)
+        rng = physics.throw_range(p, item.data.get("weight", 1))
+        skill = p.skill("throwing") - p.action_penalty("ranged") + combat.range_penalty(dist)
+        from ..dice import p_success
+        text = (f" {item.name}: {dist} tiles (max {rng}) · {p_success(skill):.0%} to land on target "
+                if dist <= rng else f" {item.name}: {dist} tiles, too far (max {rng}) ")
+        con.print(MAP_X + 1, MAP_Y + MAP_H - 1, text, fg=WHITE if dist <= rng else RED, bg=PANEL_BG)
 
     def _render_target(self, con) -> None:
         t = self.target

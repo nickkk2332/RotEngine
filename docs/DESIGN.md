@@ -298,6 +298,75 @@ dark gets no dodge or parry. This replaced blink's special case; it's now genera
 **The log** in play only shows what your character witnessed: lines are tagged with
 where they happened (`Sim.focus`), and sounds you heard arrive as private lines.
 
+## 7¾. Doors, throwing, explosives, fire and gas (`physics.py`)
+
+**Doors** are materials with `"door": <the other state>`. A closed door is solid and
+opaque; walking into it opens it (0.5 s, a little noise); `c` closes it. A `"locked"`
+door won't open and has to be breached. Pathfinding goes through closed doors.
+Materials marked `"breachable"` (doors, wooden walls, drywall, glass) count as
+passable-at-a-cost when an AI can find no other way in: it plants a charge if it
+carries one (then runs), or kicks and smashes. **Smashing** (`B`) hits terrain with
+your best melee attack. Crushing force counts double against structures, so the
+Hulk goes through brick.
+
+**Throwing** (`t`): a Throwing roll (DEX−3) with the usual range penalty.
+
+| Rule | |
+|---|---|
+| Range | ST × 1.5 ÷ weight tiles |
+| A miss | Scatters up to 4 tiles |
+| Obstacles | Walls stop a throw; windows shatter and let it through |
+
+People can be thrown too:
+- Grab someone (`G`), then hurl them (`T`) in a direction for
+  max(1, (ST − 2 × their ST) ÷ 4) tiles. A human manages a judo throw; the Hulk
+  throws soldiers across the room.
+- The flight is knockback: into walls (which may break), other people, through
+  windows and off ledges, with landing damage on top.
+- The Hulk's JSON `hurl` power aims the thrown soldier at another soldier.
+
+**Explosives** are items with an `"explosive"` spec and either `"throwable":
+{fuse_ms}` or `"plantable"`. The fuse follows the item wherever it goes: it goes off
+where it lies, in the hand of whoever picked it up, or in their pocket. So you can
+throw one back.
+
+| Part | Effect |
+|---|---|
+| `damage` / `radius` | Blast: crushing damage ÷ (1 + distance), with the knockback that brings |
+| `fragments` | `count` pieces, each hitting with odds that fall with distance². Halved if prone; walls stop them |
+| `flash` | Anyone facing it rolls CON or is stunned; everyone is dazzled (−6 Perception, −4 attack) |
+| `gas` / `fire` | Fill or ignite the area |
+| `terrain` | Damage to walls and floors around it (breaching) |
+| `noise` | An explosion carries 60 tiles |
+
+The AI:
+- throws grenades at enemies in cover, out of sight, or bunched up, when it has a clear
+  line (a window counts) and no friend is near the landing spot;
+- runs from any live explosive it can see (or goes prone when it can't get clear);
+- walks out of fire.
+
+**Fire** is a 0–10 intensity field.
+
+| | |
+|---|---|
+| Fuel | `"flammable"` materials, walls and floors (`"floor_flammable"` for finished floors) |
+| Consumes | The wall's or floor's HP (a burned-out floor drops whoever stands on it) |
+| Spreads | To neighbours at (heat ÷ 80) × flammability per second |
+| Other effects | Smoke, and light over 4 tiles |
+| Standing in it | 1d burn per 3 intensity, and a roll to catch fire (1d a second until put out; going prone may smother it) |
+| Pace | A Molotov in a wooden house: a room fire in about a minute, the whole house in 2–3 |
+
+**Gas** is a JSON `"gas"` type with a concentration field.
+
+| Key | Effect |
+|---|---|
+| `spread` | Diffusion into open neighbours |
+| `rises` | Moves up through holes in floors |
+| `decay` | Thins out over time |
+| `opacity` | Blocks sight: smoke summed along a sight line hides what's behind it, for players and NPCs alike |
+| `status` at `status_at` | Tear gas makes you choke: −3 attack, −2 defense, −3 Perception |
+| `immune_trait` | A gas mask |
+
 ## 8. Modding reference
 
 ### Content types
@@ -361,9 +430,9 @@ def ignite(args, ctx): ...
 2. **Stealth and perception (done).** See section 7½ above. Next for it: carrying
    bodies over the shoulder, distraction (throwing things to make noise), light
    switches, doors, disguises, and AI that sneaks and flanks.
-3. **More physics.** Items on the ground, throwing (including creatures: a Hulk throwing a
-   soldier is `knockback` with a chosen direction), doors and breaching, fire/gas/fluids,
-   explosives.
+3. **More physics (done).** See section 7¾ above. Next for it: fluids (water, fuel,
+   blood pools), heat and burns through walls, carrying items in the world (crates,
+   barrels), vehicles.
 4. **Roguelike mode.** Map generation from JSON prefabs (CDDA-style mapgen with
    palettes), levels and biomes, save/load, persistent injuries and medicine, skill
    growth through use.

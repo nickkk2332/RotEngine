@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from . import combat, perception
+from . import combat, perception, physics
 from .dice import check
 
 if TYPE_CHECKING:
@@ -28,6 +28,10 @@ GRAB_MS = 1000
 CHOKE_MS = 1000
 CHOKE_HYPOXIA = 3.0          # brain damage per second of choking someone already out
 KNOCKOUT_MS = (20_000, 60_000)  # how long a choke keeps someone under
+DOOR_MS = 500
+THROW_MS = 1000
+PLANT_MS = 3000
+CHARGE_FUSE_MS = 5000
 
 
 def step(sim: "Sim", c: "Creature", to: "Pos") -> int | None:
@@ -37,7 +41,11 @@ def step(sim: "Sim", c: "Creature", to: "Pos") -> int | None:
     if c.grappled_by is not None:
         return None
     victim = c.grappling
-    if to not in set(sim.world.neighbors(c.pos)) or not sim.is_free(to, ignore=victim or c):
+    if to not in set(sim.world.neighbors(c.pos, doors=True)):
+        return None
+    if sim.world.is_closed_door(to):
+        return open_door(sim, c, to)  # walking into a door opens it
+    if not sim.is_free(to, ignore=victim or c):
         return None
     if to == getattr(victim, "pos", None):
         return None
@@ -133,6 +141,108 @@ def pick_up(sim: "Sim", c: "Creature") -> int | None:
             sim.log(f"{c.name} picks up the {item.name}.")
             return PICKUP_MS
     return None
+
+
+# -- doors and terrain ------------------------------------------------------------
+def open_door(sim: "Sim", c: "Creature", pos: "Pos") -> int | None:
+    mat = sim.world.fill_mat(pos)
+    if not mat.get("door") or not mat.get("solid") or not sim.in_melee_reach(c.pos, pos):
+        return None
+    with sim.focus(c.pos, pos):
+        if mat.get("locked"):
+            sim.log(f"{c.name} tries the {mat['name']}: locked.")
+            return DOOR_MS
+        sim.world.swap_fill(pos, mat["door"])
+        sim.log(f"{c.name} opens the {mat['name']}.")
+    perception.emit_noise(sim, c, pos, "door", loudness=1 if c.sneaking else None)
+    return DOOR_MS
+
+
+def close_door(sim: "Sim", c: "Creature", pos: "Pos") -> int | None:
+    mat = sim.world.fill_mat(pos)
+    if (not mat.get("door") or mat.get("solid") or not sim.in_melee_reach(c.pos, pos)
+            or sim.creature_at(pos, include_down=True) is not None or any(p == pos for p, _ in sim.items)):
+        return None
+    sim.world.swap_fill(pos, mat["door"])
+    with sim.focus(c.pos, pos):
+        sim.log(f"{c.name} closes the {sim.world.fill_mat(pos)['name']}.")
+    perception.emit_noise(sim, c, pos, "door", loudness=1 if c.sneaking else None)
+    return DOOR_MS
+
+
+def smash(sim: "Sim", c: "Creature", pos: "Pos") -> int | None:
+    """Hit a wall, door or window next to you with your best melee attack.
+    Force concentrated on a structure counts double (like a body slammed into it)."""
+    mat = sim.world.fill_mat(pos)
+    if not mat.get("solid") or not sim.in_melee_reach(c.pos, pos) or pos[2] != c.pos[2]:
+        return None
+    melee = [(a, i) for a, i in c.attacks() if a["kind"] == "melee"]
+    if not melee:
+        return None
+    attack, _ = max(melee, key=lambda ai: combat.attack_dice(c, ai[0]).mean)
+    raw = combat.attack_dice(c, attack).roll(sim.rng)
+    force = raw * (2 if attack["damage"]["type"] == "crush" else 1)
+    combat.face(c, pos)
+    c.exert(0.4)
+    broke = sim.world.damage_fill(pos, force)
+    with sim.focus(c.pos, pos):
+        if broke:
+            sim.log(f"{c.name} smashes through the {mat['name']}!")
+            sim.terrain_changed()
+        elif force > mat.get("dr", 0):
+            sim.log(f"{c.name} {attack.get('verb', 'hits')} the {mat['name']}; it's giving way.")
+        else:
+            sim.log(f"{c.name} {attack.get('verb', 'hits')} the {mat['name']} to no effect.")
+    perception.emit_noise(sim, c, pos, "crash")
+    return int(attack.get("time_ms", 1000))
+
+
+# -- throwing and explosives ----------------------------------------------------
+def throwables(c: "Creature") -> list:
+    return [i for i in c.carried if "throwable" in i.data]
+
+
+def throw(sim: "Sim", c: "Creature", item, target: "Pos") -> int | None:
+    """Throw a carried item at a tile. Grenades are armed as they leave your hand."""
+    if item not in c.carried or not c.body.functional_with("grasp"):
+        return None
+    weight = item.data.get("weight", 1)
+    if sim.distance_pos(c.pos, target) > physics.throw_range(c, weight) or target == c.pos:
+        return None
+    c.carried.remove(item)
+    fuse = item.data["throwable"].get("fuse_ms", 3000)
+    if "explosive" in item.data and fuse > 0 and not item.armed:
+        physics.arm(sim, item, fuse, c)
+    land = physics.throw_item(sim, c, item, target)
+    if "explosive" in item.data and fuse == 0:  # molotovs: burst on impact
+        sim.items[:] = [(p, i) for p, i in sim.items if i is not item]
+        physics.explode(sim, land, item.data["explosive"], c, item.name)
+    c.exert(0.2)
+    return THROW_MS
+
+
+def hurl(sim: "Sim", c: "Creature", direction: tuple[int, int]) -> int | None:
+    """Throw the person you're holding."""
+    body = c.grappling
+    if body is None or direction == (0, 0):
+        return None
+    physics.fling(sim, c, body, direction)
+    c.exert(0.5)
+    return THROW_MS
+
+
+def plant(sim: "Sim", c: "Creature", item, pos: "Pos") -> int | None:
+    """Fix a charge to a wall or door next to you; it blows a few seconds later."""
+    if item not in c.carried or not item.data.get("plantable") or not sim.in_melee_reach(c.pos, pos):
+        return None
+    if not sim.world.fill_mat(pos).get("solid"):
+        return None
+    c.carried.remove(item)
+    sim.items.append((pos, item))
+    physics.arm(sim, item, item.data.get("fuse_ms", CHARGE_FUSE_MS), c)
+    with sim.focus(c.pos, pos):
+        sim.log(f"{c.name} plants a {item.name} on the {sim.world.fill_mat(pos)['name']}.")
+    return PLANT_MS
 
 
 def toggle_sneak(sim: "Sim", c: "Creature") -> int:

@@ -505,6 +505,28 @@ def _spots_near(sim, target):
                 yield p
 
 
+@effect("hurl")
+def _e_hurl(args, ctx):
+    """Grab the (adjacent) target and throw them: at the nearest other enemy
+    if "toward": "enemy", otherwise straight away from you."""
+    from .physics import hurl
+    t = ctx.target
+    if t is None or t.dead or not ctx.sim.in_melee_reach(ctx.self.pos, t.pos):
+        ctx.vars["_abort"] = True
+        return
+    sx, sy, _ = ctx.self.pos
+    tx, ty, _ = t.pos
+    d = ((tx > sx) - (tx < sx), (ty > sy) - (ty < sy))
+    if args.get("toward") == "enemy":
+        others = [e for e in ctx.sim.enemies_of(ctx.self) if e is not t and e.pos[2] == t.pos[2]]
+        if others:
+            o = min(others, key=lambda e: ctx.sim.distance(t, e))
+            d = ((o.pos[0] > tx) - (o.pos[0] < tx), (o.pos[1] > ty) - (o.pos[1] < ty))
+    if d == (0, 0):
+        d = (1, 0)
+    hurl(ctx.sim, ctx.self, t, d)
+
+
 @effect("attack")
 def _e_attack(args, ctx):
     from .combat import best_attack_plan, resolve_attack

@@ -27,7 +27,7 @@
    "skills": {"brawling": 14},
    "stamina_bonus": 20,
    "traits": ["tough_hide", "regeneration", "rage", "high_pain_threshold", "tireless"],
-   "powers": ["thunderclap", "hulk_leap"]},
+   "powers": ["thunderclap", "hulk_leap", "hulk_hurl"]},
   {"type": "creature", "id": "wick", "copy-from": "human", "name": "John Wick", "glyph": "@",
    "stats": {"ST": 12, "CON": 13, "DEX": 15, "INT": 12, "WIS": 12},
    "skills": {"guns": 20, "brawling": 17, "knife": 16, "first_aid": 12},
@@ -48,5 +48,8 @@
   {"type": "creature", "id": "operative", "copy-from": "human", "name": "the operative", "glyph": "@", "stats": {"ST": 11, "CON": 12, "DEX": 14, "INT": 12, "WIS": 12}, "skills": {"stealth": 15, "knife": 14, "guns": 14, "wrestling": 14, "brawling": 12, "first_aid": 12}, "traits": ["night_vision", "combat_reflexes"], "equipment": {"wield": "knife", "carry": ["suppressed_pistol"], "wear": ["leather_jacket"]}},
   {"type": "creature", "id": "sentry", "copy-from": "guard_gunner", "name": "sentry", "glyph": "g", "skills": {"guns": 12, "brawling": 11, "wrestling": 11, "first_aid": 10}},
   {"type": "creature", "id": "watchman", "copy-from": "guard", "name": "watchman", "glyph": "g", "skills": {"sword": 12, "brawling": 11, "wrestling": 12, "first_aid": 10}},
-  {"type": "creature", "id": "sharp_sentry", "copy-from": "sentry", "name": "sharp-eyed sentry", "stats": {"ST": 11, "CON": 11, "DEX": 11, "INT": 10, "WIS": 12}, "traits": ["light_sleeper"]}
+  {"type": "creature", "id": "sharp_sentry", "copy-from": "sentry", "name": "sharp-eyed sentry", "stats": {"ST": 11, "CON": 11, "DEX": 11, "INT": 10, "WIS": 12}, "traits": ["light_sleeper"]},
+  {"type": "creature", "id": "swat", "copy-from": "human", "name": "SWAT officer", "glyph": "S", "stats": {"ST": 11, "CON": 12, "DEX": 12, "INT": 10, "WIS": 11}, "skills": {"guns": 14, "throwing": 13, "brawling": 12, "wrestling": 12, "first_aid": 12}, "traits": ["combat_reflexes", "gas_mask"], "equipment": {"wield": "assault_rifle", "wear": ["ballistic_vest", "helmet"], "carry": ["frag_grenade", "flashbang", "smoke_grenade", "breaching_charge"]}},
+  {"type": "creature", "id": "gunman", "copy-from": "thug", "name": "gunman", "glyph": "t", "skills": {"guns": 12, "brawling": 11, "throwing": 11}, "equipment": {"wield": "shotgun", "wear": ["leather_jacket"]}},
+  {"type": "creature", "id": "firebug", "copy-from": "thug", "name": "firebug", "glyph": "t", "skills": {"guns": 11, "brawling": 11, "throwing": 12}, "equipment": {"wield": "pistol", "wear": ["leather_jacket"], "carry": ["molotov", "molotov"]}}
 ]

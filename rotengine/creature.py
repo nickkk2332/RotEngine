@@ -21,6 +21,7 @@ class Item:
         self.id: str = data["id"]
         self.name: str = data["name"]
         self.ammo: int | None = data.get("magazine")
+        self.armed = False  # an explosive with its fuse burning
 
     @property
     def attacks(self) -> list[dict]:

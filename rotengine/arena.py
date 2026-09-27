@@ -88,6 +88,14 @@ def build(scenario: dict, content: Content, seed: int | None = None,
                 c.patrol_i = (numbered[base] - 1) * max(1, len(c.patrol) // g.get("count", 1))
             if g.get("facing"):
                 c.facing = c.post_facing = tuple(g["facing"])
+    # "aware_teams": these sides start knowing where the enemy is (an assault team
+    # briefed on the building) even in a stealth scenario.
+    from .perception import AWARE, Awareness
+    for c in sim.creatures:
+        if c.team in scenario.get("aware_teams", []):
+            for o in sim.creatures:
+                if o.team != c.team:
+                    c.awareness[o.uid] = Awareness(AWARE, o.pos, sim.time)
     from .combat import face
     for c in sim.creatures:  # arena fights: everyone starts facing the nearest enemy
         foes = [o for o in sim.creatures if o.team != c.team]
@@ -145,8 +153,9 @@ def run_once(scenario: dict, content: Content, seed: int | None = None,
     return Outcome(winner, fight_s, dead, down, causes)
 
 
-def run_batch(scenario: dict, content: Content, runs: int, seed: int = 0) -> str:
-    outcomes = [run_once(scenario, content, seed + i) for i in range(runs)]
+def run_batch(scenario: dict, content: Content, runs: int, seed: int = 0,
+              aftermath: float | None = None) -> str:
+    outcomes = [run_once(scenario, content, seed + i, aftermath=aftermath) for i in range(runs)]
     teams = list(scenario["teams"])
     wins = Counter(o.winner for o in outcomes)
     lines = [f"{scenario.get('name', scenario['id'])}: {runs} runs"]
@@ -154,8 +163,9 @@ def run_batch(scenario: dict, content: Content, runs: int, seed: int = 0) -> str
         if wins[t] or t is not None:
             lines.append(f"  {t or 'draw':<10} wins {wins[t]:>4}  ({100 * wins[t] / runs:5.1f}%)")
     lines.append(f"  fight length: median {statistics.median(o.seconds for o in outcomes):.1f}s")
-    aftermath = scenario.get("aftermath_s", 120)
-    lines.append(f"  casualties {aftermath}s after the fight:")
+    if aftermath is None:
+        aftermath = scenario.get("aftermath_s", 120)
+    lines.append(f"  casualties {aftermath:g}s after the fight:")
     for t in teams:
         size = sum(g.get("count", 1) for g in scenario["teams"][t])
         d = statistics.mean(o.dead[t] for o in outcomes)

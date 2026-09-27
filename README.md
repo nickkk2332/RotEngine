@@ -22,6 +22,9 @@ architecture, the rules, and the roadmap.
 | `s` | sneak: half speed, near silent, much harder to spot |
 | `G` / `L` | grab someone next to you (again to choke) / let go; move while holding to drag |
 | `w` | swap to your other weapon |
+| `t` | throw a grenade, flashbang, smoke, Molotov... (cursor to aim, with your odds) |
+| `T` / `P` | hurl the person you're holding / plant a breaching charge (then a direction) |
+| `B` / `c` | smash a wall, door or window / close a door (then a direction); walk into doors to open them |
 | `v` | show where visible enemies are looking |
 | `p` | powers |
 | `<` `>` | stairs up / down |
@@ -57,6 +60,7 @@ python -m pytest
 | **Bodies** | Hit locations, crippling, fractures, severing, organ destruction, blood volume, external and internal bleeding, pain, agony, knockdown and unconsciousness. You die from blood loss, a stopped heart or a destroyed brain, not from an HP bar. HP = ST, stamina = CON. |
 | **Tempo** | Continuous time where each creature runs on its own clock. A tempo-8 speedster acts, reacts and recovers 8× as fast and hits with the momentum of it. |
 | **Tactics** | Facing (no defense from behind), a reaction window that punishes being mobbed, cover, stray rounds that hit bystanders, fatigue, first aid. |
+| **Physics** | Doors (locked ones get breached), smashing walls, throwing things and people, grenades with real fuses (throw them back), flashbangs, smoke that blocks sight, tear gas, fire that spreads through wood and burns floors out from under you. |
 | **Stealth** | Per-enemy awareness from 3d6 Perception vs Stealth, light and darkness (shootable lamps), noise that travels and is muffled by walls, alarms, guards finding bodies, patrols, no defense against the unseen, chokeholds, dragging bodies. |
 | **Threshold damage** | DR subtracts, so a rifle mostly bounces off a DR 25 hide, and a ST 60 punch ignores a vest. |
 | **Voxel world** | z-levels, per-voxel walls and floors with HP/DR, bullets through glass and drywall, knockback through walls, falling, and structural collapse. |
@@ -74,6 +78,7 @@ python -m pytest
 | Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~52%; loses to simultaneous bursts |
 | Blink assassin vs 6 guards, 2 with pistols | Assassin wins ~5-9%, usually after several kills. Deliberately hard in an open fight |
 | Night infiltration: the operative vs 6 guards who don't know you're there | For playing: keep to the shadows, choke them out, hide the bodies |
+| Breach and clear: 4 SWAT (grenades, flashbangs, smoke, charges) vs 6 barricaded occupants (Molotovs) | SWAT wins ~90%, usually losing people to shotguns and their own grenades |
 
 Map glyphs: creatures by their template glyph, `&` someone down (unconscious), `%` a
 corpse, dropped weapons by their item glyph. Terrain: `#` concrete/brick, `|` drywall,

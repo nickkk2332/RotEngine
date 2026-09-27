@@ -33,5 +33,13 @@
    "effects": [
      {"leap": {"range": 20, "max_rise": 2}},
      {"message": "{self} leaps and lands next to {target} with a crash."}
-   ]}
+   ]},
+  {"type": "power", "id": "hulk_hurl", "name": "hurl",
+   "description": "Picks a soldier up and throws him at another one.",
+   "cost": {"stamina": 1}, "time_ms": 1000, "noise": "crash",
+   "ai_condition": {"and": [{"has_target": true},
+                            {"compare": [{"distance_to_target": {}}, "<=", 1]},
+                            {"compare": [{"count_enemies": {"radius": 10}}, ">=", 2]},
+                            {"chance": 0.5}]},
+   "effects": [{"hurl": {"toward": "enemy"}}]}
 ]

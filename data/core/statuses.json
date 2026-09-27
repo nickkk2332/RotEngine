@@ -12,5 +12,8 @@
    "attack_mod": -2, "defense_mod": -2},
   {"type": "status", "id": "enraged", "name": "enraged", "attack_mod": 1, "defense_mod": -1},
   {"type": "status", "id": "grappled", "name": "held", "attack_mod": -2, "defense_mod": -3, "move_mult": 0.0},
-  {"type": "status", "id": "grappling", "name": "holding someone", "defense_mod": -2}
+  {"type": "status", "id": "grappling", "name": "holding someone", "defense_mod": -2},
+  {"type": "status", "id": "on_fire", "name": "on fire", "attack_mod": -3, "defense_mod": -2, "description": "Burning clothes: 1d burn a second until it goes out. Going prone may smother it."},
+  {"type": "status", "id": "dazzled", "name": "dazzled", "subjective": true, "attack_mod": -4, "defense_mod": -2, "perception_mod": -6},
+  {"type": "status", "id": "choking", "name": "choking", "attack_mod": -3, "defense_mod": -2, "perception_mod": -3}
 ]

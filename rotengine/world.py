@@ -21,6 +21,7 @@ import numpy as np
 
 Pos = tuple[int, int, int]
 
+FOG_BLOCKS = 100.0  # total smoke along a sight line that hides what's behind it
 DIRS8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
 AIR = 0
 
@@ -44,6 +45,9 @@ class World:
         self._climbable = np.array([bool(m.get("climbable")) for m in self.mats])
         self._nav: tuple[list, list, list] | None = None  # (passable, supported, climbable) as nested lists
         self.version = 0  # bumped on every terrain change
+        # How much gas (smoke) hangs in each voxel, as a nested list, or None
+        # when the air is clear. Sight lines add it up: enough blocks the view.
+        self.fog: list | None = None
 
     # -- editing -----------------------------------------------------------
     def set_fill(self, pos: Pos, mat: str) -> None:
@@ -53,6 +57,13 @@ class World:
         self.fill_hp[z, y, x] = self.mats[i].get("hp", 0)
         self._nav = None
         self.version += 1
+
+    def swap_fill(self, pos: Pos, mat: str) -> None:
+        """Change a voxel's material keeping its damage (a door opening)."""
+        x, y, z = pos
+        hp = self.fill_hp[z, y, x]
+        self.set_fill(pos, mat)
+        self.fill_hp[z, y, x] = min(hp, self.fill_hp[z, y, x]) if hp > 0 else self.fill_hp[z, y, x]
 
     def set_floor(self, pos: Pos, mat: str | None) -> None:
         x, y, z = pos
@@ -98,16 +109,31 @@ class World:
     def standable(self, pos: Pos) -> bool:
         return self.passable(pos) and self._navigation()[1][pos[2]][pos[1]][pos[0]]
 
-    def neighbors(self, pos: Pos) -> Iterator[Pos]:
-        """Walkable moves from pos: 8 horizontal plus climbing stairs."""
+    def is_closed_door(self, pos: Pos) -> bool:
+        m = self.fill_mat(pos)
+        return bool(m.get("door")) and bool(m.get("solid")) and not m.get("locked")
+
+    def is_breachable(self, pos: Pos) -> bool:
+        """Something solid you could kick, smash or blow your way through."""
+        m = self.fill_mat(pos)
+        return bool(m.get("solid")) and bool(m.get("breachable"))
+
+    def neighbors(self, pos: Pos, doors: bool = False, breach: bool = False) -> Iterator[Pos]:
+        """Walkable moves from pos: 8 horizontal plus climbing stairs. With
+        doors=True, closed (unlocked) doors count too: whoever paths through
+        one opens it on the way."""
         x, y, z = pos
         passable, supported, climbable = self._navigation()
         w, h = self.width, self.height
         pz, sz = passable[z], supported[z]
         for dx, dy in DIRS8:
             nx, ny = x + dx, y + dy
-            if not (0 <= nx < w and 0 <= ny < h and pz[ny][nx] and sz[ny][nx]):
+            if not (0 <= nx < w and 0 <= ny < h and sz[ny][nx]):
                 continue
+            if not pz[ny][nx]:
+                q = (nx, ny, z)
+                if dx and dy or not (doors and self.is_closed_door(q) or breach and self.is_breachable(q)):
+                    continue
             if dx and dy and not (pz[y][nx] or pz[ny][x]):
                 continue  # no squeezing diagonally between two walls
             yield (nx, ny, z)
@@ -143,6 +169,7 @@ class World:
         floors), or None if something opaque is in the way."""
         found: list[tuple[str, Pos]] = []
         prev = a
+        fog, haze = self.fog, 0.0
         for p in self.line(a, b):
             slab = self.crossing(prev, p)
             if slab is not None:
@@ -158,6 +185,10 @@ class World:
                     return None
                 if self.mats[mi].get("solid"):
                     found.append(("fill", p))
+                if fog is not None:
+                    haze += fog[z][y][x]
+                    if haze >= FOG_BLOCKS:
+                        return None
             prev = p
         return found
 

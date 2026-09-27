@@ -513,7 +513,7 @@ def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> Non
         r = check(sim.rng, c.stat("CON") + kd + int(c.trait_sum("knockdown_bonus")))
         if not r.success:
             if r.margin <= -5 or r.fumble:
-                knock_out(sim, c, "cold")
+                knock_out(sim, c, "from the blow")
                 return
             sim.log(f"  {c.name} is knocked down and stunned.")
             c.add_status("prone", None)

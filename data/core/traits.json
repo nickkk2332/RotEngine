@@ -28,5 +28,6 @@
    "description": "Lives eight seconds for every one of yours: acts, reacts and recovers 8x as fast, and hits with the momentum of it (ST x sqrt(tempo) for muscle-powered attacks).",
    "tempo": 8, "momentum_exponent": 0.5},
   {"type": "trait", "id": "night_vision", "name": "night-vision goggles", "description": "Sees in the dark almost as well as in daylight."},
-  {"type": "trait", "id": "light_sleeper", "name": "sharp-eyed", "perception_bonus": 2}
+  {"type": "trait", "id": "light_sleeper", "name": "sharp-eyed", "perception_bonus": 2},
+  {"type": "trait", "id": "gas_mask", "name": "gas mask", "description": "Immune to tear gas."}
 ]

@@ -38,15 +38,17 @@ PERIPHERAL = -4      # seen out of the corner of the eye (side arc)
 NOISE = {
     "footstep": 4, "sneak": 1, "melee": 5, "struggle": 4, "thud": 6, "suppressed": 7,
     "scream": 12, "crash": 12, "glass": 12, "alarm": 16, "collapse": 30, "gunshot": 40,
+    "door": 3, "explosion": 60,
 }
 DESCRIBE = {
     "footstep": "footsteps", "sneak": "a faint scuff", "melee": "a scuffle", "struggle": "a struggle",
     "thud": "a heavy thud", "suppressed": "a muffled shot", "scream": "a scream", "crash": "a crash",
     "glass": "glass breaking", "alarm": "a shout of alarm", "collapse": "something collapsing",
-    "gunshot": "gunfire",
+    "gunshot": "gunfire", "door": "a door", "explosion": "an explosion",
 }
 SUSPICION_FROM_NOISE = {"footstep": 25, "sneak": 15, "melee": 50, "struggle": 45, "suppressed": 45,
-                        "gunshot": 70, "scream": 60, "crash": 50, "glass": 50, "thud": 40}
+                        "gunshot": 70, "scream": 60, "crash": 50, "glass": 50, "thud": 40,
+                        "door": 25, "explosion": 80}
 
 
 @dataclass
@@ -86,7 +88,7 @@ def state(c: "Creature") -> str:
 
 
 def perception(c: "Creature") -> int:
-    base = c.stat("WIS") + int(c.trait_sum("perception_bonus"))
+    base = c.stat("WIS") + int(c.trait_sum("perception_bonus")) + int(c.status_sum("perception_mod"))
     return base + {"calm": -1, "searching": 1, "combat": 2}[state(c)]
 
 
@@ -121,7 +123,9 @@ def compute_light(world: "World", ambient: float) -> list:
 
 def light_at(sim: "Sim", pos: "Pos") -> float:
     x, y, z = pos
-    return sim.light_map()[z][y][x]
+    level = sim.light_map()[z][y][x]
+    fire = sim.fields.fire_light
+    return max(level, float(fire[z, y, x])) if fire is not None else level
 
 
 def light_word(level: float) -> str:

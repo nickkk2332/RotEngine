@@ -11,7 +11,7 @@ from __future__ import annotations
 import heapq
 from typing import TYPE_CHECKING, Callable
 
-from . import actions, combat, effects, perception
+from . import actions, combat, effects, perception, physics
 
 if TYPE_CHECKING:
     from .creature import Creature
@@ -32,6 +32,9 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
         return actions.struggle(sim, c)
     if c.grappling is not None:
         actions.release(sim, c)  # NPCs don't keep people in holds (yet)
+    flee = _flee_danger(sim, c)
+    if flee is not None:
+        return flee
     known = [e for e in sim.enemies_of(c) if perception.aware_of(c, e)]
     visible = [e for e in known if sim.world.has_los(c.pos, e.pos)]
     if c.has_status("prone") and not _good_firing_position(sim, c, known, visible):
@@ -65,6 +68,10 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
         cost = actions.pick_up(sim, c)  # replace a lost weapon (the Hulk doesn't want a rifle)
         if cost is not None:
             return cost
+
+    grenade = _grenade_throw(sim, c, target, goal, visible, known)
+    if grenade is not None:
+        return grenade
 
     if target in visible:
         plan = combat.best_attack_plan(sim, c, target)
@@ -103,8 +110,79 @@ def take_turn(sim: "Sim", c: "Creature") -> int:
     if step is None and not shooter and c.powers:
         step = _step_toward(sim, c, goal, sees, kind="los")  # a leap may open up from there
     if step is None:
+        # No way in: kick in a door, smash a flimsy wall, or blow it open.
+        step = _step_toward(sim, c, goal, breach=True)
+        if step is not None and not sim.world.passable(step):
+            return _breach(sim, c, step)
+    if step is None:
         return STUCK_WAIT_MS  # nothing reachable: hold position and re-think later
     return actions.step(sim, c, step) or STUCK_WAIT_MS
+
+
+def _danger_radius(item) -> int:
+    ex = item.data.get("explosive", {})
+    return max(ex.get("radius", 0) + 3, ex.get("fragments", {}).get("radius", 0) // 2 + 1,
+               ex.get("flash", {}).get("radius", 0))
+
+
+def _flee_danger(sim: "Sim", c: "Creature") -> int | None:
+    """Get away from a live grenade or charge you can see, or out of the flames."""
+    threats = [p for p, item in sim.items if item.armed and sim.distance_pos(p, c.pos) <= _danger_radius(item)
+               and (p == c.pos or sim.world.has_los(c.pos, p) or not sim.world.passable(p))]
+    burning = sim.fields.burning(c.pos) > 0
+    if not threats and not burning:
+        return None
+    best, best_score = None, None
+    for nxt in sim.world.neighbors(c.pos, doors=True):
+        if not sim.is_free(nxt, ignore=c) or sim.fields.burning(nxt) > 0:
+            continue
+        score = min((sim.distance_pos(nxt, t) for t in threats), default=0) - 5 * sim.fields.burning(nxt)
+        if best_score is None or score > best_score:
+            best, best_score = nxt, score
+    if best is None:
+        return actions.go_prone(sim, c) if threats and not c.has_status("prone") else None
+    return actions.step(sim, c, best)
+
+
+def _breach(sim: "Sim", c: "Creature", pos: "Pos") -> int | None:
+    """Get through the wall or locked door at pos: plant a charge if you
+    have one (then run), otherwise kick or smash it."""
+    charges = [i for i in c.carried if i.data.get("plantable")]
+    if charges:
+        cost = actions.plant(sim, c, charges[0], pos)
+        if cost is not None:
+            return cost
+    return actions.smash(sim, c, pos) or STUCK_WAIT_MS
+
+
+GRENADE_EVERY_MS = 6000
+
+
+def _grenade_throw(sim: "Sim", c: "Creature", target: "Creature", goal: "Pos",
+                   visible: list["Creature"], known: list["Creature"]) -> int | None:
+    """Toss a grenade when it's worth it: the target is dug in behind cover
+    or out of sight, or several enemies bunch up, and no friend is near
+    where it will land."""
+    items = actions.throwables(c)
+    if not items or sim.time < getattr(c, "next_grenade", 0):
+        return None
+    dist = sim.distance_pos(c.pos, goal)
+    item = items[0]
+    blast = item.data.get("explosive", {})
+    radius = max(blast.get("radius", 0), blast.get("fragments", {}).get("radius", 0) // 2, 2)
+    if dist <= radius + 1 or dist > physics.throw_range(c, item.data.get("weight", 1)):
+        return None
+    if not sim.world.has_los(c.pos, goal):  # needs a clear line (an open door, a window)
+        return None
+    if any(a.team == c.team and not a.dead and sim.distance_pos(a.pos, goal) <= radius + 1
+           for a in sim.creatures):
+        return None
+    hidden = target not in visible or combat.cover(sim, c.pos, target)[0] <= -2 or "fire" in blast
+    bunched = sum(sim.distance_pos(e.pos, goal) <= radius for e in known) >= 2
+    if not (hidden or bunched):
+        return None
+    c.next_grenade = sim.time + GRENADE_EVERY_MS
+    return actions.throw(sim, c, item, goal)
 
 
 def _believed_pos(c: "Creature", e: "Creature", visible: list["Creature"]) -> "Pos":
@@ -208,18 +286,19 @@ def can_reach(sim: "Sim", c: "Creature", target: "Creature") -> bool:
 
 
 def _step_toward(sim: "Sim", c: "Creature", goal: "Pos",
-                 done: "Callable[[Pos], bool] | None" = None, kind: str = "reach") -> "Pos | None":
+                 done: "Callable[[Pos], bool] | None" = None, kind: str = "reach",
+                 breach: bool = False) -> "Pos | None":
     """A* over walkable voxels toward goal; returns the first step.
 
     By default the search ends in melee reach of goal; `done` can replace
     that test (e.g. "has line of sight to the goal"), with `kind` naming it.
     Failed searches are the expensive ones, so they're remembered for a
     couple of seconds (or until the terrain changes)."""
-    key = (c.pos, goal, kind, sim.world.version)
+    key = (c.pos, goal, kind + ("+breach" if breach else ""), sim.world.version)
     failed_at = sim.path_failures.get(key)
     if failed_at is not None and sim.time - failed_at < FAILED_PATH_MEMORY_MS:
         return None
-    step = _astar(sim, c, goal, done)
+    step = _astar(sim, c, goal, done, breach)
     if step is None:
         sim.path_failures[key] = sim.time
         if len(sim.path_failures) > 5000:
@@ -228,13 +307,16 @@ def _step_toward(sim: "Sim", c: "Creature", goal: "Pos",
 
 
 def _astar(sim: "Sim", c: "Creature", goal: "Pos",
-           done: "Callable[[Pos], bool] | None") -> "Pos | None":
+           done: "Callable[[Pos], bool] | None", breach: bool = False) -> "Pos | None":
     if done is None:
         def done(p: "Pos") -> bool:
             return sim.in_melee_reach(p, goal)
 
     world = sim.world
     occupied = {o.pos for o in sim.creatures if not o.dead and o is not c}  # step around the fallen
+    fire = sim.fields.fire
+    if fire.any():  # and around the flames
+        occupied |= {(int(x), int(y), int(z)) for z, y, x in zip(*(fire > 2).nonzero())}
     start = c.pos
 
     def h(p: "Pos") -> int:
@@ -251,10 +333,10 @@ def _astar(sim: "Sim", c: "Creature", goal: "Pos",
             while came[cur] != start:
                 cur = came[cur]
             return cur
-        for nxt in world.neighbors(cur):
+        for nxt in world.neighbors(cur, doors=True, breach=breach):
             if nxt in occupied:
                 continue
-            ng = g + 1
+            ng = g + (1 if not breach or world.passable(nxt) else 8)
             if ng < cost.get(nxt, 1 << 30):
                 cost[nxt] = ng
                 came[nxt] = cur

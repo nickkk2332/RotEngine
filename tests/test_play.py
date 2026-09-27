@@ -243,3 +243,52 @@ def test_log_only_shows_what_you_witness():
     text = screen_text(app)
     assert "You hear something." in text
     assert "secret thing" not in text and "someone else" not in text
+
+
+def _custom_game(scenario, seed=1):
+    from rotengine.ui.game import GameScreen
+    app = new_app()
+    content = app.content_for(scenario)
+    sim = arena.build(scenario, content, seed=seed)
+    app.screen = GameScreen(app, scenario, content, sim, sim.creatures[0], seed)
+    return app, app.screen
+
+
+def test_throw_from_the_ui():
+    scenario = {"id": "range", "name": "Range", "levels": [["." * 30] * 7],
+                "teams": {"you": [{"creature": "swat", "at": [2, 3, 0]}],
+                          "them": [{"creature": "thug", "at": [14, 3, 0]}]}}
+    app, g = _custom_game(scenario)
+    n = len(g.player.carried)
+    app.handle_key("t")
+    assert g.mode == "throwmenu" and "Throw what?" in screen_text(app)
+    app.handle_key("a")  # frag grenade
+    assert g.mode == "aim" and g.cursor == g.sim.creatures[1].pos
+    assert "to land on target" in screen_text(app)
+    app.handle_key("enter")
+    assert len(g.player.carried) == n - 1
+    for _ in range(6):
+        if g.mode == "over":
+            break
+        app.handle_key(".")
+    assert any("goes off" in line for line in g.sim.lines)
+
+
+def test_direction_commands_and_hazards_render():
+    scenario = {"id": "house", "name": "House", "levels": [["WWWWWWWWWW", "W________W", "W____+___W", "WWWWWWWWWW"]],
+                "teams": {"you": [{"creature": "hulk", "at": [4, 2, 0]}],
+                          "them": [{"creature": "thug", "at": [8, 1, 0]}]}}
+    app, g = _custom_game(scenario)
+    app.handle_key("right")  # walk into the door: it opens
+    assert g.sim.world.passable((5, 2, 0))
+    app.handle_key("c")
+    assert g.mode == "dir"
+    app.handle_key("right")
+    assert not g.sim.world.passable((5, 2, 0))
+    app.handle_key("B")
+    app.handle_key("down")  # the Hulk smashes through the wooden wall below him
+    assert g.sim.world.passable((4, 3, 0)) or "giving way" in g.sim.lines[-1]
+    g.sim.fields.ignite((2, 1, 0), 8)
+    g.sim.fields.add_gas("smoke", (3, 2, 0), 80)
+    g._update_fov()
+    screen_text(app)

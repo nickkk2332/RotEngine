@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
             scenario = arena.load_scenario(args.scenario)
             content = arena.content_for(scenario, args.mod)
             if args.runs > 1:
-                print(arena.run_batch(scenario, content, args.runs, args.seed or 0))
+                print(arena.run_batch(scenario, content, args.runs, args.seed or 0, args.aftermath))
             else:
                 seed = args.seed if args.seed is not None else random.randrange(1_000_000)
                 print(f"{scenario.get('name', scenario['id'])} - seed {seed}")
