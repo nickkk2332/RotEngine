@@ -405,3 +405,27 @@ def test_resting_heals_and_dying_ends_the_run(tmp_path):
     assert not app.save_path.exists()  # permadeath
     app.handle_key("enter")
     assert "Continue your run" not in screen_text(app)
+
+
+def test_letters_work_without_text_input_events():
+    """SDL3 only sends TextInput once asked; if it never comes, letters are
+    read off KeyDown. Once TextInput shows up, it's trusted and the first key
+    isn't counted twice."""
+    import tcod.event as ev
+    from rotengine.ui.keys import KeyReader
+
+    def down(ch, shift=False):
+        return ev.KeyDown(scancode=ev.Scancode.A, sym=ev.KeySym(ord(ch)),
+                          mod=ev.Modifier.SHIFT if shift else ev.Modifier.NONE)
+    r = KeyReader()
+    assert r.read(down("c")) == "c"
+    assert r.read(down("g", shift=True)) == "G"
+    assert r.read(down("/", shift=True)) == "?"
+    assert r.read(down(".", shift=True)) == ">"
+    assert r.read(ev.KeyDown(scancode=ev.Scancode.UP, sym=ev.KeySym.UP, mod=ev.Modifier.NONE)) == "up"
+    # the first real TextInput duplicates the KeyDown just handled: dropped
+    assert r.read(down("a")) == "a"
+    assert r.read(ev.TextInput(text="a")) is None
+    # from now on letters come from TextInput only
+    assert r.read(down("b")) is None
+    assert r.read(ev.TextInput(text="b")) == "b"

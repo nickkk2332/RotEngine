@@ -11,7 +11,7 @@ import tcod.tileset
 
 from .. import arena
 from ..content import Content, load_content
-from .keys import translate
+from .keys import KeyReader
 from .menus import QUIT, MainMenu, Screen, character_menu
 from .theme import SCREEN_H, SCREEN_W
 
@@ -109,6 +109,11 @@ def main(scenario: str | None = None, play_as: str | None = None, seed: int | No
     with tcod.context.new(columns=SCREEN_W, rows=SCREEN_H, tileset=load_font(font),
                           title="RotEngine", vsync=True,
                           sdl_window_flags=tcod.context.SDL_WINDOW_RESIZABLE) as context:
+        # SDL3 (tcod 19+) sends no TextInput, i.e. no letter keys, until asked
+        window = context.sdl_window
+        if window is not None and hasattr(window, "start_text_input"):
+            window.start_text_input(autocorrect=False)
+        keys = KeyReader()
         while app.running:
             app.render(console)
             context.present(console, keep_aspect=True, integer_scaling=True)
@@ -116,7 +121,7 @@ def main(scenario: str | None = None, play_as: str | None = None, seed: int | No
                 if isinstance(event, tcod.event.Quit):
                     app.running = False
                     break
-                key = translate(event)
+                key = keys.read(event)
                 if key:
                     app.handle_key(key)
     app.close()
