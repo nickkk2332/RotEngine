@@ -358,10 +358,7 @@ def throw(sim: "Sim", c: "Creature", item, target: "Pos") -> int | None:
     fuse = item.data["throwable"].get("fuse_ms", 3000)
     if "explosive" in item.data and fuse > 0 and not item.armed:
         physics.arm(sim, item, fuse, c)
-    land = physics.throw_item(sim, c, item, target)
-    if "explosive" in item.data and fuse == 0:  # molotovs: burst on impact
-        sim.items[:] = [(p, i) for p, i in sim.items if i is not item]
-        physics.explode(sim, land, item.data["explosive"], c, item.name)
+    physics.throw_item(sim, c, item, target)  # (a Molotov bursts where it lands: flight.py)
     c.exert(0.2)
     return THROW_MS
 

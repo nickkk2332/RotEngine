@@ -16,6 +16,7 @@ from .menus import QUIT, MainMenu, Screen, character_menu
 from .theme import SCREEN_H, SCREEN_W
 
 FONTS = Path(__file__).parent / "fonts"
+FRAME_S = 1 / 60
 
 
 class App:
@@ -26,6 +27,7 @@ class App:
         self.save_path = save_path()  # tests point this somewhere harmless
         self.screen: Screen = MainMenu(self)
         self.running = True
+        self.animate = False  # the real window plays flights out frame by frame (tests don't)
 
     def content_for(self, scenario: dict) -> Content:
         key = tuple(sorted(set(self.mods) | set(scenario.get("mods", []))))
@@ -114,14 +116,18 @@ def main(scenario: str | None = None, play_as: str | None = None, seed: int | No
         if window is not None and hasattr(window, "start_text_input"):
             window.start_text_input(autocorrect=False)
         keys = KeyReader()
+        app.animate = True
         while app.running:
             app.render(console)
             context.present(console, keep_aspect=True, integer_scaling=True)
-            for event in tcod.event.wait():
+            animating = getattr(app.screen, "animating", False)
+            for event in tcod.event.wait(timeout=FRAME_S if animating else None):
                 if isinstance(event, tcod.event.Quit):
                     app.running = False
                     break
                 key = keys.read(event)
-                if key:
+                if key and not animating:  # (keys pressed mid-flight are dropped)
                     app.handle_key(key)
+            if animating:
+                app.screen.tick()
     app.close()

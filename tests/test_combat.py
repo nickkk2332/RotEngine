@@ -1,4 +1,4 @@
-from rotengine import combat
+from rotengine import combat, flight
 from rotengine.dice import Dice
 from rotengine.sim import Sim
 from rotengine.world import World
@@ -42,6 +42,7 @@ def test_hulk_punch_sends_soldier_through_a_wall(content):
     hulk = sim.spawn("hulk", "a", (4, 3, 0))
     soldier = sim.spawn("soldier", "b", (5, 3, 0))
     combat.deal_damage(sim, soldier, 40, "crush", "torso", source=hulk, origin=hulk.pos)
+    flight.finish(sim)  # he flies there over a fraction of a second
     assert soldier.pos[0] > 6  # went through the drywall
     assert sim.world.passable((6, 3, 0))
     assert not soldier.active

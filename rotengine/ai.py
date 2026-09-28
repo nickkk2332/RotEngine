@@ -11,7 +11,7 @@ from __future__ import annotations
 import heapq
 from typing import TYPE_CHECKING, Callable
 
-from . import actions, combat, effects, grapple, perception, physics
+from . import actions, combat, effects, flight, grapple, perception, physics
 from .dice import check
 
 if TYPE_CHECKING:
@@ -136,7 +136,11 @@ def _danger_radius(item) -> int:
 
 def _flee_danger(sim: "Sim", c: "Creature") -> int | None:
     """Get away from a live grenade or charge you can see, or out of the flames."""
-    threats = [p for p, item in sim.items if item.armed and sim.distance_pos(p, c.pos) <= _danger_radius(item)
+    # live explosives on the floor, and ones still in the air (headed for where they'll land)
+    live = [(p, item) for p, item in sim.items if item.armed]
+    live += [(f.path[-1] if f.path else f.pos, f.obj) for f in flight.active(sim)
+             if f.kind == "item" and getattr(f.obj, "armed", False)]
+    threats = [p for p, item in live if sim.distance_pos(p, c.pos) <= _danger_radius(item)
                and (p == c.pos or sim.world.has_los(c.pos, p) or not sim.world.passable(p))]
     burning = sim.fields.burning(c.pos) > 0
     if not threats and not burning:

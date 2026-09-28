@@ -7,6 +7,8 @@
   {"type": "status", "id": "agony", "name": "in agony", "subjective": true,
    "prevents_action": true, "defense_mod": -4},
   {"type": "status", "id": "unconscious", "name": "unconscious", "prevents_action": true},
+  {"type": "status", "id": "airborne", "name": "in the air", "prevents_action": true, "defense_mod": -4,
+   "description": "Flying through the air (see flight.py): nothing to do until you land."},
   {"type": "status", "id": "yielded", "name": "given up",
    "description": "Down, hurt and done: not fighting any more, and nobody's bothering with them. Patches themselves up if they can."},
   {"type": "status", "id": "collapsed", "name": "collapsed", "no_stand": true, "attack_mod": -2,

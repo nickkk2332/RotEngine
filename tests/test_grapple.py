@@ -1,7 +1,7 @@
 """Holds: grab a thing first, then work on it. Joint locks, neck snaps,
 strangling, crushing, tearing limbs off and swinging them, and grabbing
 weapons."""
-from rotengine import actions, combat, grapple, perception
+from rotengine import actions, combat, flight, grapple, perception
 from rotengine.creature import Item
 
 from test_stealth import yard
@@ -166,6 +166,7 @@ def test_a_torn_off_arm_is_a_club_and_a_missile(content):
     assert arm in actions.throwables(hulk)
     assert actions.throw(sim, hulk, arm, far.pos) is not None
     assert hulk.wielded is None
+    flight.finish(sim)
     assert any(i is arm for _, i in sim.items)
 
 

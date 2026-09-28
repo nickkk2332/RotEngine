@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import tcod.console
 
-from .. import actions, ai, arena, combat, fov, grapple, perception, physics
+from .. import actions, ai, arena, combat, flight, fov, grapple, perception, physics
 from ..creature import Creature
 from .keys import DIRECTIONS, VI_KEYS
 from .menus import MainMenu, Screen
@@ -131,6 +131,7 @@ class GameScreen(Screen):
         self.summary: list[str] = []
         self.show_cones = False
         self._grab_who: Creature | None = None
+        self.animating = False  # something's in the air and the App is playing it out
         self.journal: list[tuple[str, tuple]] = []  # what you witnessed, as it happened
         self._log_i = 0                              # how far into sim.lines the journal has read
         self.log_scroll = 0
@@ -214,8 +215,35 @@ class GameScreen(Screen):
             return
         self.notice = ""
         self.sim.player_act(cost)
-        self.status = self.sim.advance()
+        self._advance()
+
+    # -- animation -----------------------------------------------------------
+    FRAME_MS = 16  # world ms per animation frame: flights play out in real time
+
+    def _advance(self) -> None:
+        """Run the world to your next turn. In the real window, if something
+        takes to the air on the way, stop and let the App animate it (tick)."""
+        if getattr(self.app, "animate", False):
+            self.status = self.sim.advance(stop_on_flight=True)
+            if self.status == "flight":
+                self.animating = True
+                self._update_fov()
+                return
+        else:
+            self.status = self.sim.advance()
         self._on_turn()
+
+    def tick(self) -> None:
+        """One animation frame (called by the App while self.animating)."""
+        st = self.sim.advance_for(self.FRAME_MS)
+        self._update_fov()
+        if st in ("player", "over") or not flight.active(self.sim):
+            self.animating = False
+            if st in ("player", "over"):
+                self.status = st
+                self._on_turn()
+            else:
+                self._advance()
 
     # -- input -------------------------------------------------------------
     def on_key(self, key: str):
@@ -1072,6 +1100,9 @@ class GameScreen(Screen):
             for pos, side in self._cone_tiles().items():
                 self._highlight(con, pos, CONE_FRONT_BG if side == "front" else CONE_SIDE_BG)
         marks: dict = {}
+        for f in flight.active(self.sim):  # things in the air
+            if f.kind == "item" and f.pos[2] == z and f.pos in self.visible:
+                marks[f.pos[:2]] = (f.obj.data.get("glyph", "*"), WHITE, (60, 60, 20))
         for pos, item in self.sim.items:
             if pos[2] == z and pos in self.visible:
                 marks[pos[:2]] = (item.data.get("glyph", "("),

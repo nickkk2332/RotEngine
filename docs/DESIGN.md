@@ -182,17 +182,47 @@ apart (−5×HP). Otherwise death comes from one of three things:
 * **Pain:** an ongoing penalty of 4 × (fraction of HP lost) + 1 per fracture, capped at
   −6. It's halved by high pain threshold and reduced by 0.5 per point of WIS over 10.
   It applies fully to attacks and half to defense.
-* **Agony:** a wound of HP/3 or more, a fracture, or a lost part means a WIS roll; fail
-  and you're doubled over and helpless for 2 s (4 s if you fail badly).
-* **Knockdown:** a wound over HP/2 means a CON roll (skull −10, face and vitals −5).
-  Fail and you're stunned and prone; fail by 5 and you're out cold.
-* **Unconsciousness:** dropping to ≤ 0 HP (or past another −HP) means a CON roll
-  or pass out, and every turn at ≤ 0 HP needs another roll. Blood under 70% means a
-  CON roll every 10 s; under 60% you're out. You wake (a CON roll every 5 s) only
-  with HP > 0, blood ≥ 60% and a beating heart.
+* **Agony:** a wound of half your HP or more, a fracture, or a lost part means a WIS
+  roll; fail and you flinch, doubled over and helpless for 1.5 s (3 s if you fail badly).
+* **Knockdown:** a wound over 2/3 of your HP (a quarter, to the head) means a CON roll
+  (skull −10, face and vitals −5). Fail and you're stunned and down. Only a blow to a
+  `"concussion"` part (skull, face) can knock you out, on a fail by 5 or a fumble.
+* **Collapse (pain):** going into the red, or a wound of HP/3 or more once there, is a
+  WIS roll (minus 1 per full HP below 0). Fail and your legs go: `collapsed`, down and
+  unable to stand, but **awake**: you can still shoot, stab, crawl and use things, at
+  −2. A WIS roll (minus pain) every 10 s gets you up. Exhaustion (stamina at −½)
+  collapses you the same way.
+* **Unconsciousness** comes from real causes only; going below 0 HP isn't one.
+  - **Head trauma:** see Knockdown.
+  - **Shock:** every wound while below 0 HP is a CON + 4 roll to stay awake, at −2 per
+    full HP below 0, −2 below 70% blood (−4 below 60%) and −2/−4 graying out for air.
+    Easy just into the red, a coin flip at −2×HP; past −3×HP nobody stays awake.
+  - **Blood loss:** below 70%, the same roll every 10 s; below 50% you're out.
+  - **No air:** at 10% oxygen.
+  - Coming round: the same roll every 5 s, once HP > −2×HP, blood ≥ 60%, air ≥ 50%
+    and the heart is beating.
+* **Giving up:** an NPC that's collapsed or below −½×HP rolls WIS (plus pain
+  resistance, minus pain) each turn with enemies about; fail and they give up
+  (`yielded`): they stop fighting, patch themselves up, and nobody targets them.
+  Templates with `"fearless": true` (the Hulk) never do. This is what keeps most
+  fights ending in the unconscious and the wounded rather than the dead.
 * **Fatigue:** melee swings (0.2–0.3), shots (0.05) and running (0.05/tile) cost
   stamina. Recovery is 0.1/s in a fight and 0.5/s resting. Below 1/3 stamina you're
   winded (−1, half move); at 0 exhausted (−3, quarter move); at −½ you collapse.
+
+**Depth.** A damage type's `depth` is how much of a wound reaches what's deep inside.
+Cuts are 0.25: a slash opens someone up, bleeds and takes limbs off, but only a quarter
+of it counts toward internal bleeding, destroying `"deep"` parts (vitals, skull) and
+brain damage, and slashes to the vitals hit ribs (×1, not ×1.5). Stabs, bullets and
+blunt force go all the way. So the knife has two real modes: **slash** (+1 to hit,
+bleeding and dismemberment) and **stab** (−1 to hit, ×2, ×3 into the vitals: the one
+that reaches the heart).
+
+**Weapon modes.** Any weapon can list several attacks; the attack menu (`f`, then
+`< >`) cycles them with their odds. Knife: slash / stab. Sabre: cut / thrust (−1).
+Bat: swing / jab (+1, faster). Pistol: single shot (+1, no strays) / rapid fire (3
+rounds, extra hits on a good roll). Rifle: single / burst / rifle butt. Shotgun:
+shot / butt stroke. A two-handed weapon can't be used on someone who's holding you.
 
 **After the fight** the arena keeps the clock running (`aftermath_s`, default 120).
 The wounded bleed, pass out, wake up or die, and the winners bandage each other. The
@@ -233,8 +263,12 @@ have per-voxel HP and DR from their material. Arrays are numpy `[z, y, x]`.
 * **Line of sight / fire:** a 3D line. Opaque fills and floors block it; transparent
   solids (glass, grates) let it through but add DR and get damaged (windows shatter).
 * **Penetration:** missed shots continue and chew through thin walls.
-* **Knockback:** a body travels tile by tile. Hitting a wall damages both, and if the
-  wall breaks the body keeps going. If it leaves a floor edge, it falls.
+* **Knockback:** a body flies tile by tile through world time (`flight.py`): 8 + 2 ×
+  tiles tiles per second, `airborne` (can't act, −4 to defend) until it lands.
+  Hitting a wall damages both, and if the wall breaks the body keeps going; hitting
+  a person knocks them down; leaving a floor edge, it falls. Everyone else keeps
+  acting meanwhile: a speedster gets two or three turns while the Hulk's throw is
+  in the air.
 * **Falling:** 2d6 crushing per storey, landing prone.
 * **Structural collapse:** `settle()` flood-fills support from z = 0 through walls and
   floors. Anything disconnected falls, and debris hits whoever is below. Break the
@@ -425,7 +459,10 @@ People can be thrown too:
   max(1, (ST − 2 × their ST) ÷ 4) tiles. A human manages a judo throw; the Hulk
   throws soldiers across the room.
 - The flight is knockback: into walls (which may break), other people, through
-  windows and off ledges, with landing damage on top.
+  windows and off ledges, with landing damage on top. Thrown items fly at 20
+  tiles/s the same way (a grenade's fuse keeps burning in the air; cook it too long
+  and it goes off mid-flight; a Molotov bursts where it lands). The window plays
+  flights out as animation.
 - The Hulk's JSON `hurl` power aims the thrown soldier at another soldier.
 
 **Explosives** are items with an `"explosive"` spec and either `"throwable":

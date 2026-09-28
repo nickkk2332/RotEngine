@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from . import effects, grapple, perception, training
+from . import effects, flight, grapple, perception, training
 from .body import Injury
 from .creature import Item
 from .dice import Dice, check, p_success
@@ -618,9 +618,11 @@ def kill(sim: "Sim", c: "Creature", cause: str) -> None:
         sim.log(f"  {c.name} dies ({cause}).")
 
 
-def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int) -> None:
+def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int,
+              on_land=None) -> None:
     """Momentum doesn't care about armor: knockback uses the damage rolled,
-    not what got through (a riot shield still gets shoved)."""
+    not what got through (a riot shield still gets shoved). The body flies
+    tile by tile through world time (see flight.py)."""
     if tiles <= 0:
         return
     dx = _sign(target.pos[0] - origin[0])
@@ -628,41 +630,7 @@ def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int) -> None
     if dx == dy == 0:
         dx, dy = sim.rng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
     sim.log(f"  {target.name} is hurled back {tiles} tile{'s' * (tiles > 1)}!")
-    world = sim.world
-    for i in range(tiles):
-        x, y, z = target.pos
-        nxt = (x + dx, y + dy, z)
-        remaining = tiles - i
-        if not world.in_bounds(nxt):
-            break
-        if world.fill_mat(nxt).get("solid"):
-            mat = world.fill_mat(nxt)
-            slam = Dice(remaining, 6).roll(sim.rng)
-            broke = world.damage_fill(nxt, slam * 2)
-            sim.log(f"  {target.name} {'smashes through' if broke else 'slams into'} the {mat['name']}!")
-            perception.emit_noise(sim, None, nxt, "crash")
-            deal_damage(sim, target, slam, "crush", knockback_ok=False)
-            if not broke:
-                break
-            sim.terrain_changed()
-        blocker = sim.creature_at(nxt)
-        if blocker is not None:
-            slam = Dice(remaining, 6).roll(sim.rng)
-            sim.log(f"  {target.name} crashes into {blocker.name}!")
-            deal_damage(sim, target, slam, "crush", knockback_ok=False)
-            deal_damage(sim, blocker, slam, "crush", knockback_ok=False)
-            if not blocker.has_status("prone"):
-                blocker.add_status("prone", None)
-            break
-        target.pos = nxt
-        if not world.supported(nxt):
-            break
-    target.aim_target = None
-    sim.make_room(target)
-    if not target.dead and not target.has_status("prone"):
-        if not check(sim.rng, target.stat("DEX") - (tiles - 1)).success:
-            target.add_status("prone", None)
-    sim.check_fall(target)
+    flight.launch_body(sim, target, (dx, dy), tiles, on_land)
 
 
 FIZZLE_COOLDOWN_MS = 2000

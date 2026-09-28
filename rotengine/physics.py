@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from . import combat, perception, training
+from . import combat, flight, perception, training
 from .dice import Dice, check
 
 if TYPE_CHECKING:
@@ -305,6 +305,10 @@ def _detonate(sim: "Sim", item: "Item", source: "Creature | None") -> None:
     pos = item_position(sim, item)
     if pos is None:
         return
+    in_air = flight.flying(sim, item)
+    if in_air is not None:
+        in_air.done = True
+        sim.flights[:] = [f for f in sim.flights if not f.done]
     sim.items[:] = [(p, i) for p, i in sim.items if i is not item]
     for c in sim.creatures:
         if item in c.carried:
@@ -318,6 +322,9 @@ def item_position(sim: "Sim", item: "Item") -> "Pos | None":
     for p, i in sim.items:
         if i is item:
             return p
+    f = flight.flying(sim, item)
+    if f is not None:
+        return f.pos  # goes off in mid-air
     for c in sim.creatures:
         if item in c.carried or c.wielded is item:
             return c.pos
@@ -338,7 +345,8 @@ def fling_distance(thrower: "Creature", body: "Creature") -> int:
 
 
 def throw_item(sim: "Sim", c: "Creature", item: "Item", target: "Pos") -> "Pos":
-    """Throw an item at a tile. Returns where it landed."""
+    """Throw an item at a tile. Returns where it's headed (it may not get
+    there: walls and floors stop it on the way)."""
     world = sim.world
     dist = sim.distance_pos(c.pos, target)
     combat.face(c, target)
@@ -352,38 +360,7 @@ def throw_item(sim: "Sim", c: "Creature", item: "Item", target: "Pos") -> "Pos":
         scatter = min(4, 1 + (-roll.margin) // 3)
         land = (target[0] + sim.rng.randint(-scatter, scatter), target[1] + sim.rng.randint(-scatter, scatter),
                 target[2])
-    # the throw stops at the last open tile before anything solid in the way
-    last = c.pos
-    for p in world.line(c.pos, land):
-        if not world.in_bounds(p):
-            break
-        if not world.passable(p):
-            mat = world.fill_mat(p)
-            if mat.get("transparent") and world.damage_fill(p, 10):  # through the window
-                with sim.focus(p):
-                    sim.log(f"The {mat['name']} shatters!")
-                sim.terrain_changed()
-                perception.emit_noise(sim, None, p, "glass")
-            else:
-                break
-        slab = world.crossing(last, p)
-        if slab is not None and world.floor_mat(slab) is not None:
-            break
-        last = p
-    land = last
-    # come to rest on a floor
-    x, y, z = land
-    while z > 0 and not world.supported((x, y, z)):
-        z -= 1
-    land = (x, y, z)
-    hit = sim.creature_at(land)
-    if hit is not None and hit is not c and "thrown" in item.data:
-        with sim.focus(land):
-            dice = combat.attack_dice(c, {"damage": item.data["thrown"]})
-            sim.log(f"  {item.the[0].upper()}{item.the[1:]} hits {hit.name}.")
-            combat.deal_damage(sim, hit, dice.roll(sim.rng), item.data["thrown"]["type"], source=c)
-    sim.drop(land, item)
-    perception.emit_noise(sim, None, land, "thud")
+    flight.launch_item(sim, c, item, land)  # it flies there (see flight.py)
     return land
 
 
@@ -401,9 +378,13 @@ def hurl(sim: "Sim", c: "Creature", body: "Creature", direction: tuple[int, int]
     origin = (body.pos[0] - dx, body.pos[1] - dy, body.pos[2])
     with sim.focus(c.pos, body.pos):
         sim.log(f"{c.name} hurls {body.name}!")
-        combat.knockback(sim, body, origin, tiles)
-        landing = Dice(max(1, tiles // 2), 6).roll(sim.rng)
-        if not body.dead:
-            combat.deal_damage(sim, body, landing, "crush", knockback_ok=False)
-            body.add_status("prone", None)
+        combat.knockback(sim, body, origin, tiles, on_land=functools.partial(_hurled_landing, sim, body, tiles))
+
+
+def _hurled_landing(sim: "Sim", body: "Creature", tiles: int) -> None:
+    """Coming down hard at the end of a hurl."""
+    if not body.dead:
+        with sim.focus(body.pos):
+            combat.deal_damage(sim, body, Dice(max(1, tiles // 2), 6).roll(sim.rng), "crush", knockback_ok=False)
+        body.add_status("prone", None)
     perception.emit_noise(sim, None, body.pos, "crash")

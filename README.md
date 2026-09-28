@@ -28,11 +28,12 @@ architecture, the rules, and the roadmap.
 | `t` | throw a grenade, flashbang, smoke, Molotov... (cursor to aim, with your odds) |
 | `T` / `P` | hurl the person you're holding / plant a breaching charge (then a direction) |
 | `B` / `c` | smash a wall, door or window / close a door (then a direction); walk into doors to open them |
-| `v` | show where visible enemies are looking |
+| `v` | show whole vision cones (an arrow in front of each enemy always shows which way they face) |
 | `p` | powers |
 | `<` `>` | stairs up / down; `>` on a stairwell (yellow `>`) takes you to the next floor |
 | `[` `]` | view the level below / above |
 | `x` | look: inspect terrain and anyone's wounds |
+| `M` | message log: scroll back through everything you saw and heard |
 | `i` / `a` / `@` | inventory (wield, wear, use, throw, drop) / use medicine / character sheet (skills, wounds) |
 | `R` | rest: heal until something happens (roguelike) |
 | `?` / `Esc` | help / quit to menu (a run is saved) |
@@ -92,6 +93,11 @@ python -m pytest
 Map glyphs: creatures by their template glyph, `&` someone down (unconscious), `%` a
 corpse, dropped weapons by their item glyph. Terrain: `#` concrete/brick, `|` drywall,
 `=` glass, `O` wooden pillar, `X` stairs, `.`/`_`/`,` floors, blank = open air.
+
+Enemy markings: an arrow in front of each enemy shows which way they face (red if
+they know you're there). Background: amber = suspicious, red = has spotted you,
+magenta = aiming at you. Your target is black on bright yellow. Enemies you can see
+on the level above are drawn purple where they stand, below blue.
 
 ## Layout
 

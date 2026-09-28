@@ -61,6 +61,8 @@ class Sim:
         self.awaiting: Creature | None = None  # player-controlled creature whose turn it is
         self.fields = physics.Fields(self)     # fire and gas
         self._events: dict[int, Callable[[], None]] = {}  # timed events (fuses), by negative id
+        self.flights: list = []           # things in the air (flight.py)
+        self.flight_started = False       # set when something takes off (the UI animates it)
         self._event_ids = itertools.count(2)
         heapq.heappush(self._queue, (start_time + TICK_MS, next(self._seq), -1))
 
@@ -302,19 +304,42 @@ class Sim:
         return next(iter(teams)) if len(teams) == 1 else None
 
     # -- interactive play --------------------------------------------------
-    def advance(self, max_ms: int = 180_000) -> str:
+    def advance_for(self, ms: int) -> str:
+        """Run the world forward at most `ms` (the UI's animation frames):
+        "player" if it's the player's turn, "over" if the fight or run is
+        over, else "time"."""
+        if self.awaiting is not None:
+            return "player"
+        if self.endless:
+            alive = lambda: any(c.controller == "player" and not c.dead for c in self.creatures)  # noqa: E731
+        else:
+            alive = lambda: len(self.active_teams()) > 1  # noqa: E731
+        until = self.time + ms
+        stop = self._loop(alive, until, stop_for_player=True)
+        if stop == "player":
+            return "player"
+        if not alive():
+            return "over"
+        if stop == "time":
+            self.time = until  # nothing happened in this slice: the clock still runs
+        return "time"
+
+    def advance(self, max_ms: int = 180_000, stop_on_flight: bool = False) -> str:
         """Run the world until a player-controlled creature needs a decision.
         Returns "player" (see self.awaiting), "over" (one side left) or
         "timeout". A downed or stunned player is simply skipped past."""
         if self.awaiting is not None:
             return "player"
+        if not stop_on_flight:
+            self.flight_started = False
         if self.endless:  # roguelike: nothing ends until you do
             alive = lambda: any(c.controller == "player" and not c.dead for c in self.creatures)  # noqa: E731
-            stop = self._loop(alive, self.time + max_ms, stop_for_player=True)
-            return "player" if stop == "player" else "over" if not alive() else "timeout"
-        stop = self._loop(lambda: len(self.active_teams()) > 1, max_ms, stop_for_player=True)
-        if stop == "player":
-            return "player"
+            stop = self._loop(alive, self.time + max_ms, stop_for_player=True, stop_on_flight=stop_on_flight)
+            return stop if stop in ("player", "flight") else "over" if not alive() else "timeout"
+        stop = self._loop(lambda: len(self.active_teams()) > 1, max_ms, stop_for_player=True,
+                          stop_on_flight=stop_on_flight)
+        if stop in ("player", "flight"):
+            return stop
         return "over" if len(self.active_teams()) <= 1 else "timeout"
 
     def player_act(self, own_ms: int) -> None:
@@ -336,8 +361,11 @@ class Sim:
         self._loop(lambda: True, self.time + int(seconds * 1000))
 
     def _loop(self, keep_going: Callable[[], bool], until_ms: int,
-              stop_for_player: bool = False) -> str:
+              stop_for_player: bool = False, stop_on_flight: bool = False) -> str:
         while self._queue and keep_going():
+            if stop_on_flight and self.flight_started:
+                self.flight_started = False
+                return "flight"  # something took off: the UI wants to show it
             at, seq, uid = self._queue[0]
             if at > until_ms:
                 return "time"

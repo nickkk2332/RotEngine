@@ -1,5 +1,5 @@
 """Doors, breaching, throwing, explosions, fire and gas."""
-from rotengine import actions, ai, combat, perception, physics
+from rotengine import actions, ai, combat, flight, perception, physics
 from rotengine.creature import Item
 from rotengine.sim import Sim
 from rotengine.world import World
@@ -91,12 +91,14 @@ def test_live_grenade_goes_off_wherever_it_is(content):
     b = sim.spawn("thug", "b", (14, 4, 0))
     g = next(i for i in a.carried if i.id == "frag_grenade")
     actions.throw(sim, a, g, (8, 4, 0))
+    flight.finish(sim)
     assert g.armed and any(i is g for _, i in sim.items)
     # b picks it up and throws it back before it goes off
     pos = next(p for p, i in sim.items if i is g)
     sim.items.remove((pos, g))
     b.carried.append(g)
     actions.throw(sim, b, g, (3, 4, 0))
+    flight.finish(sim)
     land = next(p for p, i in sim.items if i is g)
     assert land[0] < 8  # it went back the way it came
     near = [c for c in (a, b) if sim.distance_pos(c.pos, land) <= 2]
@@ -136,6 +138,7 @@ def test_throwing_through_a_window(content):
     a = sim.spawn("swat", "a", (6, 4, 0))
     smoke = next(i for i in a.carried if i.id == "smoke_grenade")
     actions.throw(sim, a, smoke, (14, 4, 0))
+    flight.finish(sim)
     land = next(p for p, i in sim.items if i is smoke)
     assert sim.world.passable((10, 4, 0))  # the window broke
     assert land[0] > 10 or any("bad throw" in line for line in sim.lines)
@@ -147,7 +150,11 @@ def test_hulk_hurls_a_soldier_into_another(content):
     thrown = sim.spawn("soldier", "b", (6, 4, 0))
     other = sim.spawn("soldier", "b", (12, 4, 0))
     power = next(p for p in hulk.powers if p["id"] == "hulk_hurl")
-    combat.use_power(sim, hulk, power, thrown)
+    cost = combat.use_power(sim, hulk, power, thrown)
+    sim._schedule(hulk, sim.time + cost)  # (the throw takes him a second, as in a real turn)
+    sim._schedule(other, sim.time + 5000)  # (and the other one doesn't get out of the way)
+    assert thrown.has_status("airborne")
+    flight.finish(sim)
     assert thrown.pos[0] > 6
     assert other.hp < other.max_hp or other.has_status("prone")
 
@@ -159,6 +166,7 @@ def test_throwing_a_held_person(content):
     actions.grab(sim, a, b)
     if a.grappling is b:
         actions.hurl(sim, a, (1, 0))
+        flight.finish(sim)
         assert b.pos[0] >= 7 and b.has_status("prone") and a.grappling is None
 
 
@@ -169,6 +177,8 @@ def test_molotov_sets_a_wooden_room_ablaze(content):
     victim = sim.spawn("thug", "b", (9, 4, 0))
     m = next(i for i in a.carried if i.id == "molotov")
     actions.throw(sim, a, m, (9, 4, 0))
+    assert not sim.fields.fire.any()  # still in the air
+    flight.finish(sim)
     assert sim.fields.fire.any()
     tick(sim, 40)
     assert int((sim.fields.fire > 0).sum()) > 9  # it spread across the wooden floor
@@ -210,3 +220,61 @@ def test_tear_gas_and_masks(content):
     tick(sim, 1)
     assert thug.has_status("choking")
     assert not swat.has_status("choking")
+
+
+# -- things in flight --------------------------------------------------------------------------
+def test_a_hurled_body_takes_time_to_land(content):
+    sim = room(content, seed=2, w=30)
+    hulk = sim.spawn("hulk", "a", (5, 4, 0))
+    thrown = sim.spawn("soldier", "b", (6, 4, 0))
+    power = next(p for p in hulk.powers if p["id"] == "hulk_hurl")
+    t0 = sim.time
+    cost = combat.use_power(sim, hulk, power, thrown)
+    sim._schedule(hulk, sim.time + cost)
+    assert thrown.pos == (6, 4, 0) and thrown.has_status("airborne") and not thrown.can_act
+    flight.finish(sim)
+    assert thrown.pos[0] > 10 and not thrown.has_status("airborne")
+    assert 100 < sim.time - t0 < 800  # a fraction of a second, not instant
+
+
+def test_a_speedster_can_act_while_a_body_is_in_the_air(content):
+    """Hit him, send him flying, get there first."""
+    sim = room(content, seed=2, w=30)
+    hulk = sim.spawn("hulk", "a", (5, 4, 0))
+    fast = sim.spawn("speedster", "a", (5, 6, 0))
+    thrown = sim.spawn("soldier", "b", (6, 4, 0))
+    fast.controller = "player"
+    power = next(p for p in hulk.powers if p["id"] == "hulk_hurl")
+    cost = combat.use_power(sim, hulk, power, thrown)
+    sim._schedule(hulk, sim.time + cost)
+    turns_in_flight = 0
+    for _ in range(10):
+        if sim.advance() != "player" or not thrown.has_status("airborne"):
+            break
+        turns_in_flight += 1
+        sim.player_act(actions.step(sim, fast, (fast.pos[0] + 1, fast.pos[1], 0)) or 100)
+    assert turns_in_flight >= 2
+
+
+def test_a_thrown_grenade_can_go_off_in_the_air(content):
+    sim = room(content, seed=1, w=30)
+    a = sim.spawn("swat", "a", (2, 4, 0))
+    g = next(i for i in a.carried if i.id == "frag_grenade")
+    physics.arm(sim, g, 200, a)  # cooked too long
+    assert actions.throw(sim, a, g, (14, 4, 0)) is not None
+    assert flight.flying(sim, g) is not None and not any(i is g for _, i in sim.items)
+    sim._loop(lambda: True, sim.time + 1000)
+    assert flight.flying(sim, g) is None and not any(i is g for _, i in sim.items)
+    assert any("frag grenade" in line and ("explod" in line or "blast" in line or "goes off" in line)
+               for line in sim.lines) or a.hp < a.max_hp
+
+
+def test_something_in_the_air_survives_a_save(content):
+    import pickle
+    sim = room(content, seed=1, w=30)
+    a = sim.spawn("swat", "a", (2, 4, 0))
+    smoke = next(i for i in a.carried if i.id == "smoke_grenade")
+    assert actions.throw(sim, a, smoke, (14, 4, 0)) is not None
+    back = pickle.loads(pickle.dumps(sim))
+    flight.finish(back)
+    assert any(i.id == "smoke_grenade" for _, i in back.items)
