@@ -98,6 +98,8 @@ class Creature:
         self.grappling: Creature | None = None
         self.grappled_by: Creature | None = None
         self.choked = 0                   # seconds spent in a chokehold
+        self.airway_blocked_until = -1    # world ms: someone's choking you, no breath until then
+        self.neck_guard_until = -1        # world ms: hand-fighting the choke (see grapple.fight_grip)
         self.rear_hold = False            # (as the holder) took them from behind
         self.hold: str | None = None      # (as the holder) the part id held, or "weapon"
 
@@ -198,6 +200,30 @@ class Creature:
         p -= max(0, self.stat("WIS") - 10) / 2
         return max(0, min(6, int(p)))
 
+    # -- breathing ---------------------------------------------------------
+    @property
+    def breath_seconds(self) -> float:
+        """How long you last without air at rest: 40 s at CON 10, +4 s per
+        point (a trained diver's lungs are a trait: "breath_mult")."""
+        return max(10.0, (40 + 4 * (self.stat("CON") - 10)) * self.trait_product("breath_mult"))
+
+    @property
+    def apnea_rate(self) -> float:
+        """% oxygen lost per second with no air (doubled while fighting)."""
+        return 100 / self.breath_seconds
+
+    @property
+    def blood_choke_rate(self) -> float:
+        """% oxygen lost per second with a blood choke locked in: the brain's
+        supply is cut, so it's fast whoever you are, about 8 s to black out
+        at CON 10 and 10 s at CON 14."""
+        return 90 / max(5.0, (8 + 0.5 * (self.stat("CON") - 10)) * self.trait_product("breath_mult"))
+
+    def air_penalty(self) -> int:
+        """Graying out: -2 below 50% oxygen, -4 below 30%."""
+        o = self.body.oxygen
+        return 4 if o < 30 else 2 if o < 50 else 0
+
     def fatigue_level(self) -> int:
         """0 fresh, 1 winded (< 1/3 stamina), 2 exhausted (<= 0)."""
         if self.stamina <= 0:
@@ -212,11 +238,12 @@ class Creature:
         """Everything that makes this creature worse at acting right now.
         `kind` ("melee"/"ranged") adds status modifiers specific to it."""
         mods = self.status_sum("attack_mod") + (self.status_sum(f"{kind}_attack_mod") if kind else 0)
-        return (self.shock + self.pain() + self.body.blood_penalty()
+        return (self.shock + self.pain() + self.body.blood_penalty() + self.air_penalty()
                 + (0, 1, 3)[self.fatigue_level()] - int(mods))
 
     def defense_penalty(self) -> int:
-        return (self.pain() // 2 + self.body.blood_penalty() + (0, 1, 3)[self.fatigue_level()]
+        return (self.pain() // 2 + self.body.blood_penalty() + self.air_penalty()
+                + (0, 1, 3)[self.fatigue_level()]
                 - int(self.status_sum("defense_mod")))
 
     # -- derived combat numbers --------------------------------------------

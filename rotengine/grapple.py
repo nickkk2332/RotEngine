@@ -39,7 +39,10 @@ SQUEEZE_MS = 1000
 TAKEDOWN_MS = 1000
 DISARM_MS = 1000
 THROW_MS = 1000
-CHOKE_HYPOXIA = 3.0            # brain damage per second of choking someone already out
+CHOKE_HYPOXIA = 1.0            # brain damage per second of choking someone out of air (~1.5 min)
+PARTIAL_CHOKE = 2.0            # % oxygen a second when they're fighting the choke off
+GUARD_MS = 1000
+STARTLE_MS = 1000              # grabbed by someone you never saw: this long before you react
 KNOCKOUT_MS = (20_000, 60_000)  # how long a choke keeps someone under
 WEAPON = "weapon"              # the hold id for a grip on someone's weapon
 WEAPON_GRAB_PENALTY = {"melee": -3, "ranged": -2, "long": -1}
@@ -137,6 +140,7 @@ def grab(sim: "Sim", c: "Creature", target: "Creature", what: str = "torso") -> 
         return GRAB_MS
     c.exert(0.3)
     defense = combat.defense_against(sim, c, target, "melee")
+    _noticed_before = perception.aware_of(target, c) if target.controller != "player" else defense is not None
     skill = grab_skill(c, target, what, unaware=defense is None)
     roll = check(sim.rng, skill)
     training.practice(sim, c, "wrestling", skill, roll.success)
@@ -165,6 +169,8 @@ def grab(sim: "Sim", c: "Creature", target: "Creature", what: str = "torso") -> 
             sim.log(f"{c.name} gets hold of {target.name}{' from behind' if rear else ''}.")
         else:
             sim.log(f"{c.name} grabs {target.name}'s {name}{' from behind' if rear else ''}.")
+    if rear and not regrip and not _noticed_before:
+        sim.apply_status(target, "startled", STARTLE_MS)  # a moment before they can react
     _hold(c, target, what, rear=rear or (regrip and c.rear_hold))
     perception.notice_attacker(sim, target, c)  # they know now (a grip on the throat keeps them quiet)
     return GRAB_MS
@@ -278,13 +284,43 @@ def _contest(sim: "Sim", c: "Creature", t: "Creature", resist: int | None = None
     if not t.conscious:
         return True
     target = (max(c.stat("ST"), c.skill("wrestling")) + 2 + (3 if c.rear_hold else 0) + bonus
-              - c.action_penalty("melee"))
+              - _wrestling_penalty(c))
     mine = check(sim.rng, target)
     base = resist if resist is not None else max(t.stat("ST"), t.skill("wrestling"))
-    theirs = check(sim.rng, base - t.action_penalty("melee") - t.choked)
+    theirs = check(sim.rng, base - _wrestling_penalty(t))
     won = mine.success and (not theirs.success or mine.margin > theirs.margin)
     training.practice(sim, c, "wrestling", target, won)
     return won
+
+
+def _choke_contest(sim: "Sim", c: "Creature", t: "Creature", strangle: bool) -> bool:
+    """Is the choke locked in this second? A choke is technique: your
+    Wrestling (+2 from behind) against their max(ST, Wrestling), +4 if
+    they spent their last moment hand-fighting it (fight_grip), minus
+    whatever they're suffering (graying out included). Two hands on the
+    throat can be muscled on: strangling uses max(ST, Wrestling)."""
+    if not t.conscious:
+        return True
+    skill = max(c.stat("ST"), c.skill("wrestling")) if strangle else c.skill("wrestling")
+    mine_t = skill + (2 if c.rear_hold else 0) - _wrestling_penalty(c)
+    guard = guard_bonus(t) if t.neck_guard_until > sim.time else 0
+    theirs_t = max(t.stat("ST"), t.skill("wrestling")) + guard - _wrestling_penalty(t)
+    mine, theirs = check(sim.rng, mine_t), check(sim.rng, theirs_t)
+    won = mine.success and (not theirs.success or mine.margin > theirs.margin)
+    training.practice(sim, c, "wrestling", mine_t, won)
+    training.practice(sim, t, "wrestling", theirs_t, not won)
+    return won
+
+
+def _wrestling_penalty(c: "Creature") -> int:
+    """What hampers you grappling: everything in your action penalty except
+    being in a hold itself (that -2 is for swinging at people, not for
+    fighting the hold)."""
+    pen = c.action_penalty("melee")
+    for sid in ("grappled", "grappling"):
+        if c.has_status(sid):
+            pen += int(c.content.get("status", sid).get("attack_mod", 0))
+    return pen
 
 
 def _technique(c: "Creature") -> int:
@@ -324,30 +360,31 @@ def odds(c: "Creature", t: "Creature", part, dtype_id: str = "wrench") -> tuple[
 
 
 def choke(sim: "Sim", c: "Creature") -> int | None:
-    """Sleeper hold on the neck you're holding. The one being choked can't
-    cry out; each second they roll CON (worse every second) or go limp for
-    half a minute or so. Keep squeezing after that and you're killing them."""
+    """Sleeper hold on the neck you're holding: it cuts the blood to the
+    brain. Locked in (see _choke_contest), they lose oxygen fast, about 8-10
+    seconds to black out; if they're fighting it off, only a little. They
+    can't cry out either way. Keep it on after they're out and you're
+    killing them."""
     t = c.grappling
     if t is None or t.dead or "choke" not in moves(c):
         return None
-    t.choked += 1
     perception.emit_noise(sim, c, c.pos, "sneak")
     with sim.focus(c.pos, t.pos):
-        _choke_round(sim, c, t, resist=2, verb="tightens the chokehold on")
+        _choke_round(sim, c, t, strangle=False)
     return CHOKE_MS
 
 
 def strangle(sim: "Sim", c: "Creature") -> int | None:
-    """Two hands on the throat. Slower to put them out than a proper choke
-    (+2 to their CON), but every second crushes the throat too: a strong
-    grip crushes the windpipe (they suffocate), a monstrous one the neck."""
+    """Two hands on the throat: it cuts the air, not the blood, so it's
+    slower (they last about as long as they can hold their breath while
+    fighting, CON again), but every second crushes the throat too: a strong
+    grip crushes the windpipe, a monstrous one the neck."""
     t = c.grappling
     if t is None or t.dead or "strangle" not in moves(c):
         return None
-    t.choked += 1
     perception.emit_noise(sim, c, c.pos, "sneak")
     with sim.focus(c.pos, t.pos):
-        _choke_round(sim, c, t, resist=4, verb="throttles")
+        _choke_round(sim, c, t, strangle=True)
         if not t.dead:
             combat.deal_damage(sim, t, squeeze_dice(c).roll(sim.rng), "squeeze", c.hold, source=c,
                                knockback_ok=False)
@@ -356,22 +393,56 @@ def strangle(sim: "Sim", c: "Creature") -> int | None:
     return CHOKE_MS
 
 
-def _choke_round(sim: "Sim", c: "Creature", t: "Creature", resist: int, verb: str) -> None:
+def _choke_round(sim: "Sim", c: "Creature", t: "Creature", strangle: bool) -> None:
+    t.choked += 1
+    t.airway_blocked_until = sim.time + int(CHOKE_MS / c.tempo) + 100  # no breath while the hold's on
+    b = t.body
     if t.conscious:
-        if not check(sim.rng, t.stat("CON") - 2 * t.choked + resist).success:
+        locked = _choke_contest(sim, c, t, strangle)
+        if locked:
+            b.oxygen -= 2 * t.apnea_rate if strangle else t.blood_choke_rate
+        else:
+            b.oxygen -= PARTIAL_CHOKE
+        b.oxygen = max(0.0, b.oxygen)
+        if b.oxygen <= 10:
             sim.log(f"{t.name} goes limp in {c.name}'s grip.")
             t.statuses.pop("prone", None)
             t.add_status("unconscious", sim.time + sim.rng.randint(*KNOCKOUT_MS))
             t.add_status("prone", None)
+        elif locked:
+            verb = "throttles" if strangle else "has the choke locked in on"
+            sim.log(f"{c.name} {verb} {t.name} (air {b.oxygen:.0f}%).")
         else:
-            sim.log(f"{c.name} {verb} {t.name}.")
+            sim.log(f"{t.name} fights {c.name}'s arm off their throat (air {b.oxygen:.0f}%).")
         return
-    t.body.hypoxia += CHOKE_HYPOXIA
-    if t.body.hypoxia >= 100:
+    b.oxygen = max(0.0, b.oxygen - (t.blood_choke_rate if not strangle else 2 * t.apnea_rate))
+    if b.oxygen <= 0:
+        b.hypoxia += CHOKE_HYPOXIA
+    if b.hypoxia >= 100:
         combat.kill(sim, t, "strangled")
         release(sim, c)
     elif t.choked % 5 == 0:
         sim.log(f"{c.name} keeps squeezing {t.name}'s throat...")
+
+
+def guard_bonus(c: "Creature") -> int:
+    """How much hand-fighting a choke helps: +2 if you've no idea what
+    you're doing, +1 per point of Wrestling over 10 on top, up to +6."""
+    return 2 + max(0, min(4, c.skill("wrestling") - 10))
+
+
+def fight_grip(sim: "Sim", c: "Creature") -> int | None:
+    """Held by the neck: get your hands on the arm and your chin down. For
+    the next second the choke is much harder to lock in (see guard_bonus)."""
+    g = c.grappled_by
+    if g is None or not silenced(c):
+        return None
+    c.neck_guard_until = sim.time + int(GUARD_MS / c.tempo) + 100
+    c.exert(0.3)
+    c.body.oxygen = max(0.0, c.body.oxygen - 1)  # fighting burns air
+    with sim.focus(c.pos, g.pos):
+        sim.log(f"{c.name} claws at {g.name}'s arm, chin down.")
+    return GUARD_MS
 
 
 def wrench(sim: "Sim", c: "Creature", part_id: str | None = None) -> int | None:
@@ -523,21 +594,24 @@ def release(sim: "Sim", c: "Creature") -> int | None:
         t.grappled_by = None
         t.statuses.pop("grappled", None)
     t.choked = 0
+    t.airway_blocked_until = -1  # air again
     return 200
 
 
 def struggle(sim: "Sim", c: "Creature") -> int | None:
     """Try to break a hold: your ST against theirs (they have the leverage).
-    Held from behind is -3, pinned -2; every second of choking saps you
-    another -1. Someone holding your weapon has no leverage, but rip a
-    blade free through their grip and it cuts their hand."""
+    Held from behind is -3, pinned -2, and graying out from a choke costs
+    you too (it's in your action penalty). Thrashing without air burns it.
+    Someone holding your weapon has no leverage, but rip a blade free
+    through their grip and it cuts their hand."""
     g = c.grappled_by
     if g is None:
         return None
     on_weapon = g.hold == WEAPON
     pinned = c.has_status("prone") and not g.has_status("prone")
-    penalty = (c.action_penalty("melee") + (3 if g.rear_hold else 0) + c.choked
-               + (2 if pinned else 0))
+    penalty = _wrestling_penalty(c) + (3 if g.rear_hold else 0) + (2 if pinned else 0)
+    if silenced(c):
+        c.body.oxygen = max(0.0, c.body.oxygen - 2)
     base = _weapon_resist(c) if on_weapon else max(c.stat("ST"), c.skill("wrestling"))
     mine = check(sim.rng, base - penalty)
     training.practice(sim, c, "wrestling", base - penalty, mine.success)

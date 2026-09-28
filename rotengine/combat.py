@@ -186,6 +186,11 @@ def base_skill(sim: "Sim", attacker: "Creature", target: "Creature", attack: dic
     """Effective skill before hit location / deception, or None if impossible."""
     skill = (attacker.skill(attack["skill"]) + attack.get("skill_mod", 0)
              - attacker.action_penalty(attack["kind"]))
+    if attacker.grappled_by is target:  # hitting back at whoever's holding you
+        if attack["kind"] == "ranged" and item is not None and item.data.get("two_handed"):
+            return None  # no bringing a rifle to bear on someone wrapped around you
+        if target.rear_hold:
+            skill -= 2   # blind, backwards, over your shoulder
     if attack["kind"] == "melee":
         if not sim.in_melee_reach(attacker.pos, target.pos, attack.get("reach", 1)):
             return None

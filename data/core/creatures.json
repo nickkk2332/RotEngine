@@ -18,9 +18,9 @@
    "equipment": {"wield": "pistol", "wear": ["leather_jacket"]}},
   {"type": "creature", "id": "soldier", "copy-from": "human", "name": "soldier", "glyph": "s",
    "stats": {"ST": 11, "CON": 11, "DEX": 11, "INT": 10, "WIS": 10},
-   "skills": {"guns": 13, "brawling": 12, "first_aid": 12},
+   "skills": {"guns": 13, "brawling": 12, "first_aid": 12, "wrestling": 12, "knife": 12},
    "traits": ["combat_reflexes"],
-   "equipment": {"wield": "assault_rifle", "wear": ["ballistic_vest", "helmet"]}},
+   "equipment": {"wield": "assault_rifle", "wear": ["ballistic_vest", "helmet"], "carry": ["knife"]}},
 
   {"type": "creature", "id": "hulk", "copy-from": "human", "name": "the Hulk", "glyph": "G",
    "stats": {"ST": 60, "CON": 20, "DEX": 11, "INT": 8, "WIS": 8},

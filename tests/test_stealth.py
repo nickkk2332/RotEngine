@@ -130,7 +130,7 @@ def test_holding_on_after_they_go_limp_kills(content):
     p = sim.spawn("operative", "p", (9, 4, 0))
     while p.grappling is None:
         actions.grab(sim, p, g, "neck")
-    for _ in range(80):
+    for _ in range(200):  # out in seconds; dead after about another minute and a half
         if g.dead:
             break
         actions.choke(sim, p)

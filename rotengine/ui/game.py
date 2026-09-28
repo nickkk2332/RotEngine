@@ -37,6 +37,7 @@ HELP = [
     (". or numpad 5", "wait half a second (of your time)"),
     ("s", "sneak on/off: slower, quieter, harder to spot"),
     ("G", "grab someone next to you by the neck, body, an arm, a leg... or their weapon"),
+    ("", "  being choked: G hand-fights it (+2 to +6 to keep it off, by Wrestling)"),
     ("", "  then G again: what that grip allows (choke, strangle, wrench, crush,"),
     ("", "  trip, disarm, tear it off...). Move to drag them; T to hurl them"),
     ("L", "let go"),
@@ -257,6 +258,8 @@ class GameScreen(Screen):
             if p.grappling is not None:
                 self.mode = "grapple"
                 return None
+            if p.grappled_by is not None and grapple.silenced(p):
+                return self._do(grapple.fight_grip(sim, p))
             near = self._grabbable()
             if not near:
                 self.notice = "Nobody next to you to grab."
@@ -463,7 +466,8 @@ class GameScreen(Screen):
         for move in grapple.moves(p):
             if move == "choke":
                 out.append(("choke" if t.conscious else "keep choking",
-                            f"{t.choked}s so far; out in seconds" if t.conscious else "this kills them",
+                            f"their air {t.body.oxygen:.0f}%; fast, if you can lock it in" if t.conscious
+                            else "this kills them",
                             lambda: grapple.choke(sim, p)))
             elif move == "strangle":
                 avg, tries, _ = grapple.odds(p, t, part, "squeeze")
@@ -1093,6 +1097,10 @@ class GameScreen(Screen):
         con.print(x, y, f"Stam  {p.stamina:>4.1f}/{p.max_stamina}", fg=WHITE)
         bar(con, x + 15, y, w - 15, max(0.0, p.stamina) / p.max_stamina, BLUE)
         y += 1
+        air = b.oxygen
+        con.print(x, y, f"Air   {air:>4.0f}%", fg=WHITE if air > 50 else ORANGE if air > 25 else RED)
+        bar(con, x + 15, y, w - 15, air / 100, CYAN if air > 50 else ORANGE if air > 25 else RED)
+        y += 1
         if b.total_bleed > 0.01:
             internal = " (internal)" if b.internal_bleed > 0.01 else ""
             con.print(x, y, f"Bleeding {b.total_bleed:.2f}%/s{internal}"[:w], fg=RED)
@@ -1185,8 +1193,13 @@ class GameScreen(Screen):
                 con.print(x + 2, y, state[:w - 2], fg=CYAN)
             y += 1
         if p.grappled_by is not None:
-            con.print(x, y, f"held by {p.grappled_by.name}: move to struggle"[:w], fg=RED)
-            y += 1
+            g = p.grappled_by
+            if grapple.silenced(p):
+                y += print_wrapped(con, x, y, w, f"{g.name} is choking you: G hand-fight, move to "
+                                   "struggle, or hit them", fg=RED, max_lines=3)
+            else:
+                con.print(x, y, f"held by {g.name}: move to struggle"[:w], fg=RED)
+                y += 1
         return y + 1
 
     def _wound_lines(self, c: Creature):

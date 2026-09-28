@@ -136,7 +136,19 @@ apart (−5×HP). Otherwise death comes from one of three things:
 |---|---|
 | **Brain or neck destroyed** | Skull or neck damage past `destroy_at` (1.5× / 2× HP, any damage type). Instant. |
 | **Bled out** | Blood below 50% starts brain hypoxia (faster the lower it goes). Hypoxia 100 = death. |
-| **Brain death** | Vitals destroyed means cardiac arrest: seconds of consciousness, then hypoxia at 0.5/s (about 3.5 minutes). |
+| **Brain death** | Vitals destroyed means cardiac arrest: oxygen gone in ~9 s (you black out), then hypoxia at 0.5/s (about 3.5 minutes). |
+| **Suffocation** | A broken neck, a crushed windpipe, a choke held on: oxygen runs out, you black out at 10%, and brain damage starts at 0. |
+
+**Oxygen** (`body.oxygen`, 0–100%, the Air bar). Each second of world time:
+* **No heartbeat:** −10%/s. The brain's supply is gone: about 9 seconds of consciousness.
+* **Not breathing** (a status with `"hypoxia"`: broken neck, crushed windpipe): −100/breath-hold
+  seconds per second. Breath-hold is `40 + 4 × (CON − 10)` s (× trait `breath_mult`): 40 s
+  at CON 10, 56 s at CON 14. Twice as fast while fighting it (a strangle).
+* **Being choked:** the choke itself drains you (see Grappling), and you can't breathe in
+  between.
+* **Otherwise:** +25%/s back.
+* **Graying out:** −2 to everything below 50%, −4 below 30%. **Blackout** at 10%. At 0,
+  brain damage (hypoxia) accrues at the cause's rate. You can't wake below 50%.
 
 **The layers of a wound:**
 * **HP (trauma):** limbs only count up to their crippling point, so a leg can't take
@@ -309,20 +321,38 @@ that grip allows.
 * **Changing grip** is a new grab roll; a miss keeps the grip you had.
 * **While held:** can't move; −2 to attack, −3 to defend. The grip ends if the part
   comes off, the weapon is dropped, or the two of you are separated.
-* **Choke:** each second a CON roll at −2 per second choked, or limp for 20–60 s (no
-  injury). Keep choking and it becomes hypoxia, then death ("strangled").
-* **Strangle:** the same, but their CON roll is +2 (slower to put them out) and each
-  second is also `squeeze` damage to the throat. A normal grip barely marks it; ST 20+
-  crushes the windpipe (`crushed_windpipe`: out at once, dead in under 2 minutes); the
-  Hulk crushes the neck.
+* **Choke** (a blood choke): each second is a contest. Is it locked in? Your Wrestling
+  (+2 from behind) against their max(ST, Wrestling), plus their **hand-fighting bonus**
+  if they spent their last moment fighting it (`G` when you're the one being choked):
+  +2 for the untrained, +1 per Wrestling over 10, up to +6. Locked: they lose
+  `90 / (8 + (CON − 10)/2)` % oxygen, about 11%/s, so ~8 s to black out at CON 10 and
+  ~10 s at CON 14. Not locked: 2%/s (they still can't breathe). Out for 20–60 s (no
+  injury). Keep it on and their air hits 0 and the brain starts to die: "strangled"
+  about a minute and a half later.
+* **Strangle** (two hands on the throat): the same contest, but on max(ST, Wrestling),
+  it drains like holding your breath while fighting (2 × the breath-hold rate: ~20 s at
+  CON 10) and each second is also `squeeze` damage to the throat. A normal grip barely
+  marks it; ST 20+ crushes the windpipe (`crushed_windpipe`: out cold, dead in under 2
+  minutes); the Hulk crushes the neck.
+* **Grabbed by someone you never saw:** `startled` for a second before you can react.
+* **Fighting back** (the AI does this; so can you): hand-fight the choke (trained
+  fighters do this 70% of the time, the untrained panic and thrash), hit whoever's
+  holding you (−2 if they're behind you; a rifle or other two-handed gun can't be
+  brought to bear, so a soldier draws his combat knife), or struggle once the air is
+  going. Measured against the operative (Wrestling 14) from behind: an untrained
+  civilian is out in ~7 s, a guard ~9 s, an unaware soldier ~10 s, the Commander
+  ~16 s with a third of attempts broken; and an aware target is hard to get by the
+  neck at all (−5, and they defend).
 * **Squeeze / crush / bear hug:** `squeeze` damage (thrust from ST, +technique; armor
   doesn't help; the part's `dr.squeeze` does) to the part you hold. It breaks bones
   but never tears anything off.
 * **Take down:** slammed prone (thrust damage from the floor) and still held; pinned,
   they struggle at −2.
 * **Struggle:** your max(ST, Wrestling) against theirs + 2 (leverage). −3 held from
-  behind, −2 pinned, −1 per second choked. Against a grip on your weapon: your ST or
-  weapon skill against their ST or Wrestling, no leverage.
+  behind, −2 pinned, and graying out counts against you; thrashing without air burns
+  it. Against a grip on your weapon: your ST or weapon skill against their ST or
+  Wrestling, no leverage. Being in a hold (−2 to attack) doesn't count against
+  fighting the hold itself.
 * **Hurl (`T`) / drag / let go (`L`):** hurl throws them like knockback
   (`(ST − 2 × their ST) / 4` tiles); dragging costs double move time.
 
@@ -620,7 +650,7 @@ nothing reachable hold position.
 
 **Trait and status fields the engine reads:** `natural_dr`, `stat_mods`, `speed_bonus`,
 `dodge_bonus`, `parry_bonus`, `move_mult`, `tempo`, `momentum_exponent`,
-`action_time_mult`, `exertion_mult`, `pain_mult`, `pain_resist`, `knockdown_bonus`,
+`action_time_mult`, `exertion_mult`, `pain_mult`, `pain_resist`, `knockdown_bonus`, `breath_mult`,
 `hooks`. Statuses also: `prevents_action`, `attack_mod`, `melee_attack_mod`,
 `ranged_attack_mod`, `ranged_target_mod`, `defense_mod`, `move_mult`, `subjective`,
 `hypoxia` (brain damage per second: can't breathe; no waking up), `knocks_out` (when

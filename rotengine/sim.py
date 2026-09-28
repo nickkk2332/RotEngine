@@ -27,6 +27,9 @@ from .world import DIRS8, Pos, World
 
 TICK_MS = 1000
 CARDIAC_ARREST_HYPOXIA = 0.5   # brain damage per second with no circulation (~3.5 min to death)
+ARREST_OXYGEN_DRAIN = 10.0     # % oxygen per second with no heartbeat: ~9 s of consciousness
+BREATH_RECOVERY = 25.0         # % oxygen per second back once you can breathe again
+OXYGEN_BLACKOUT = 10.0         # below this you're out
 
 
 class Sim:
@@ -415,6 +418,9 @@ class Sim:
             if c.dead:
                 return
         perception.decay(self, c)
+        self._breathe(c)
+        if c.dead:
+            return
         self._blood(c, second)
         if c.dead:
             return
@@ -435,24 +441,46 @@ class Sim:
             self.make_room(c)
         self.fire_hooks(c, "on_second")
 
+    def _breathe(self, c: Creature) -> None:
+        """Oxygen out and in, once a second. No heartbeat: the brain's supply
+        is gone in seconds. Not breathing (a broken neck, a crushed
+        windpipe): you last as long as you can hold your breath (CON).
+        Someone's hands on your throat: the choke itself drains you (see
+        grapple.choke). Otherwise you get your breath back quickly. At 10%
+        you black out; at 0 the brain starts to die."""
+        b = c.body
+        arrest = c.has_status("cardiac_arrest")
+        not_breathing = c.status_sum("hypoxia")  # the status's brain-damage rate once the air is gone
+        choked = c.airway_blocked_until > self.time
+        if arrest:
+            b.oxygen -= ARREST_OXYGEN_DRAIN
+        elif not_breathing:
+            b.oxygen -= c.apnea_rate
+        elif not choked:
+            b.oxygen = min(100.0, b.oxygen + BREATH_RECOVERY)
+        b.oxygen = max(0.0, b.oxygen)
+        if b.oxygen <= OXYGEN_BLACKOUT and c.conscious:
+            combat.knock_out(self, c, "as the heart gives out" if arrest else "as the world goes dark")
+        if b.oxygen <= 0 and not choked:
+            b.hypoxia += CARDIAC_ARREST_HYPOXIA if arrest else not_breathing
+        if b.hypoxia >= 100:
+            self._brain_death(c)
+
+    def _brain_death(self, c: Creature) -> None:
+        b = c.body
+        cause = "bled out" if b.blood < 50 and b.oxygen > 0 else "brain death"
+        for d in c.status_defs():
+            cause = d.get("death_text", cause) if d.get("hypoxia") else cause
+        combat.kill(self, c, cause)
+
     def _blood(self, c: Creature, second: int) -> None:
         b = c.body
         arrest = c.has_status("cardiac_arrest")
         b.blood = max(0.0, b.blood - b.total_bleed * (0.2 if arrest else 1.0))  # no pump, little pressure
-        rate = 0.04 * (50 - b.blood) if b.blood < 50 else 0.0
-        smothered = c.status_sum("hypoxia")  # can't breathe: a broken neck, a crushed windpipe
-        if smothered:
-            rate = max(rate, smothered)
-        if arrest:
-            rate = max(rate, CARDIAC_ARREST_HYPOXIA)
-            if c.conscious and self.rng.random() < 0.15:
-                combat.knock_out(self, c, "as the heart gives out")
-        b.hypoxia += rate
+        if b.blood < 50:
+            b.hypoxia += 0.04 * (50 - b.blood)
         if b.hypoxia >= 100:
-            cause = "bled out" if b.blood < 50 and not arrest else "brain death"
-            for d in c.status_defs():
-                cause = d.get("death_text", cause) if d.get("hypoxia") else cause
-            combat.kill(self, c, cause)
+            self._brain_death(c)
             return
         if c.conscious:
             if b.blood < 60:
@@ -469,5 +497,5 @@ class Sim:
 
     def _can_wake(self, c: Creature) -> bool:
         b = c.body
-        return (c.hp > 0 and b.blood >= 60 and c.stamina > 0
+        return (c.hp > 0 and b.blood >= 60 and c.stamina > 0 and b.oxygen >= 50
                 and not c.has_status("cardiac_arrest") and not c.status_sum("hypoxia") and b.hypoxia < 50)

@@ -29,7 +29,7 @@ LOOK_MS = 1000
 
 def take_turn(sim: "Sim", c: "Creature") -> int:
     if c.grappled_by is not None:
-        return actions.struggle(sim, c)
+        return _held_turn(sim, c)
     if c.grappling is not None:
         return _grapple_turn(sim, c)
     flee = _flee_danger(sim, c)
@@ -187,6 +187,28 @@ def _grenade_throw(sim: "Sim", c: "Creature", target: "Creature", goal: "Pos",
         return None
     c.next_grenade = sim.time + GRENADE_EVERY_MS
     return actions.throw(sim, c, item, goal)
+
+
+def _held_turn(sim: "Sim", c: "Creature") -> int:
+    """Someone has hold of c. A choke is a race: early on, hand-fight it and
+    hit back (a knife or a pistol into whoever's behind you); once the air's
+    running out, it's all-out struggling."""
+    g = c.grappled_by
+    neck = grapple.silenced(c)
+    air = c.body.oxygen
+    trained = c.skill("wrestling") >= 10
+    if neck and air > 40 and sim.rng.random() < (0.7 if trained else 0.35):
+        return grapple.fight_grip(sim, c)  # hands to the arm on your throat (the untrained mostly thrash)
+    if not neck or air > 30:
+        w = c.wielded
+        if w is not None and w.data.get("two_handed") and not any(a.get("kind") == "melee" for a in w.attacks):
+            sidearm = next((i for i in c.carried if i.attacks and not i.data.get("two_handed")), None)
+            if sidearm is not None and sim.rng.random() < 0.5:
+                return actions.wield(sim, c, sidearm)  # can't swing a rifle round: go for the knife
+        plan = combat.best_attack_plan(sim, c, g, allow_aim=False)
+        if plan is not None and plan.value > 0.5 and sim.rng.random() < 0.4:
+            return actions.attack(sim, c, g, plan)
+    return grapple.struggle(sim, c)
 
 
 def _grapple_turn(sim: "Sim", c: "Creature") -> int:

@@ -12,8 +12,12 @@ and feeds several separate systems:
   outright. Destroying the heart/lungs stops circulation.
 * **Blood** is a percentage of normal volume. External wounds bleed and can
   clot. Internal bleeding from deep torso/organ wounds does not clot.
-* **Hypoxia** is brain damage from missing oxygen: blood loss below 50% or a
-  stopped heart. At 100 the brain dies.
+* **Oxygen** is the air in you, 0-100%. It drains when you can't breathe
+  (a choke, a crushed windpipe, a broken neck) or when blood can't reach the
+  brain (a blood choke, a stopped heart), and comes back fast when you can.
+  You gray out below 50%, black out at 10%.
+* **Hypoxia** is brain damage from missing oxygen: once your oxygen is gone,
+  or from blood loss below 50%. At 100 the brain dies.
 
 So a leg wound never kills directly. The bleeding it causes can, a few
 minutes later, if nobody puts a tourniquet on it.
@@ -89,6 +93,7 @@ class Body:
         self.bleed_rate: float = 0.0      # external, %/s, can clot
         self.internal_bleed: float = 0.0  # %/s, needs surgery
         self.hypoxia: float = 0.0         # brain damage, 100 = brain death
+        self.oxygen: float = 100.0        # % of the air in you (see Creature.apnea_rate)
         self.parts = {p["id"]: PartState(p["id"], p) for p in plan["parts"]}
 
     # -- queries -----------------------------------------------------------
@@ -269,6 +274,8 @@ class Body:
         if self.total_bleed > 0.01:
             extra += f" (losing {self.total_bleed:.1f}%/s"
             extra += ", internal)" if self.internal_bleed > 0.01 else ")"
+        if self.oxygen < 99.5:
+            extra += f", air {self.oxygen:.0f}%"
         if self.hypoxia >= 1:
             extra += f", brain damage {min(100, self.hypoxia):.0f}"
         return f"HP {round(self.hp)}/{self.max_hp}{extra}" + (f" [{'; '.join(hurt)}]" if hurt else "")
