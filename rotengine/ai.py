@@ -12,6 +12,7 @@ import heapq
 from typing import TYPE_CHECKING, Callable
 
 from . import actions, combat, effects, grapple, perception, physics
+from .dice import check
 
 if TYPE_CHECKING:
     from .creature import Creature
@@ -28,6 +29,10 @@ LOOK_MS = 1000
 
 
 def take_turn(sim: "Sim", c: "Creature") -> int:
+    if c.has_status("yielded"):
+        return _first_aid(sim, c, allies=False) or IDLE_MS
+    if _gives_up(sim, c):
+        return IDLE_MS
     if c.grappled_by is not None:
         return _held_turn(sim, c)
     if c.grappling is not None:
@@ -189,6 +194,23 @@ def _grenade_throw(sim: "Sim", c: "Creature", target: "Creature", goal: "Pos",
     return actions.throw(sim, c, item, goal)
 
 
+def _gives_up(sim: "Sim", c: "Creature") -> bool:
+    """Collapsed, or deep in the red, with enemies about: a WIS roll (plus
+    pain resistance, minus pain) each turn to keep fighting. Fail and they
+    give up: they stop fighting and nobody bothers with them any more.
+    Creatures with "fearless": true never do."""
+    if c.template.get("fearless") or not sim.enemies_of(c):
+        return False
+    if not (c.has_status("collapsed") or c.hp < -c.max_hp / 2):
+        return False
+    if check(sim.rng, c.stat("WIS") + int(c.trait_sum("pain_resist")) - c.pain()).success:
+        return False
+    c.add_status("yielded", None)
+    with sim.focus(c.pos):
+        sim.log(f"{c.name} gives up.")
+    return True
+
+
 def _held_turn(sim: "Sim", c: "Creature") -> int:
     """Someone has hold of c. A choke is a race: early on, hand-fight it and
     hit back (a knife or a pistol into whoever's behind you); once the air's
@@ -201,7 +223,7 @@ def _held_turn(sim: "Sim", c: "Creature") -> int:
         return grapple.fight_grip(sim, c)  # hands to the arm on your throat (the untrained mostly thrash)
     if not neck or air > 30:
         w = c.wielded
-        if w is not None and w.data.get("two_handed") and not any(a.get("kind") == "melee" for a in w.attacks):
+        if w is not None and w.data.get("two_handed"):
             sidearm = next((i for i in c.carried if i.attacks and not i.data.get("two_handed")), None)
             if sidearm is not None and sim.rng.random() < 0.5:
                 return actions.wield(sim, c, sidearm)  # can't swing a rifle round: go for the knife

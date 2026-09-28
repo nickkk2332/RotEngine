@@ -52,6 +52,7 @@ class PartState:
     fractured: bool = False
     destroyed: bool = False
     note: str = ""          # what happened to it, in words ("neck snapped", "arm cut off")
+    deep: float = 0.0       # injury that reached deep inside (see damage type "depth")
     splinted: bool = False  # a break that's been set: less pain, and it heals
     knit: float = 0.0       # seconds a splinted break has had to heal
 
@@ -194,8 +195,18 @@ class Body:
         # A "sudden" damage type (wrenching) only tears a part off in one
         # violent pull: cranking an arm over and over breaks it, it doesn't
         # remove it. Everything else accumulates.
+        # "depth": how much of a wound reaches what's deep inside. A slash
+        # (depth 0.25) opens someone up without reaching the heart or brain;
+        # a stab or a bullet goes all the way. Parts marked "deep" (vitals,
+        # skull) are destroyed by deep injury, and internal bleeding and
+        # brain damage come from it too.
+        deep_injury = injury * dtype.get("depth", 1.0)
+        part.deep += deep_injury
         destroy_at = d.get("destroy_at")
-        amount = injury if dtype.get("sudden") else part.damage
+        if dtype.get("sudden"):
+            amount = injury
+        else:
+            amount = part.deep if d.get("deep") else part.damage
         if (destroy_at is not None and not part.destroyed
                 and (dtype.get("dismembers") or d.get("organ"))
                 and amount >= mh * destroy_at):
@@ -206,11 +217,11 @@ class Body:
 
         self.bleed_rate += injury / mh * dtype.get("bleed", 0.0) * d.get("bleed_mult", 1.0) * BLEED_SCALE
         internal = d.get("internal")
-        if internal and injury >= mh * internal.get("at", 0):
-            self.internal_bleed += injury / mh * internal["bleed"] * BLEED_SCALE
+        if internal and deep_injury >= mh * internal.get("at", 0):
+            self.internal_bleed += deep_injury / mh * internal["bleed"] * BLEED_SCALE
             result.internal = True
         if d.get("brain"):
-            self.hypoxia += injury / mh * d.get("brain_damage", 40)
+            self.hypoxia += deep_injury / mh * d.get("brain_damage", 40)
         return result
 
     def _lose_children(self, part_id: str) -> list[str]:

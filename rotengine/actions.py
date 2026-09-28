@@ -92,6 +92,8 @@ def reload(sim: "Sim", c: "Creature") -> int | None:
 def stand_up(sim: "Sim", c: "Creature") -> int | None:
     if not c.has_status("prone"):
         return None
+    if any(d.get("no_stand") for d in c.status_defs()):
+        return None  # collapsed: your legs won't have it yet
     if c.body.total_with("stance") and not c.body.functional_with("stance"):
         return None  # no working legs: you crawl
     del c.statuses["prone"]

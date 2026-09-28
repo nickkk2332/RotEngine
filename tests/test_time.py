@@ -33,7 +33,8 @@ def test_momentum_makes_fast_hits_hard(content):
     sim = open_arena(content)
     fast = sim.spawn("speedster", "a", (1, 4, 0))
     knife = fast.wielded.attacks[0]
-    assert combat.attack_dice(fast, knife).mean > combat.st_damage(11, "swing").mean * 2
+    normal = combat.st_damage(11, "swing").mean
+    assert normal * 1.5 < combat.attack_dice(fast, knife).mean < normal * 2.5  # hard, not absurd
 
 
 def test_relative_tempo_changes_defense(content):

@@ -1,27 +1,34 @@
 [
   {"type": "item", "id": "knife", "name": "combat knife", "glyph": "-", "weight": 1,
    "attacks": [
-     {"id": "slash", "name": "slash", "verb": "slashes", "kind": "melee", "skill": "knife",
-      "damage": {"st": "swing", "add": -2, "type": "cut"}, "parry": -1, "time_ms": 1000},
-     {"id": "stab", "name": "stab", "verb": "stabs", "kind": "melee", "skill": "knife",
-      "damage": {"st": "thrust", "add": 0, "type": "impale"}, "parry": -1, "time_ms": 1000}
+     {"id": "slash", "name": "slash", "verb": "slashes", "kind": "melee", "skill": "knife", "skill_mod": 1,
+      "damage": {"st": "swing", "add": -2, "type": "cut"}, "parry": -1, "time_ms": 1000,
+      "//": "Easy to land and it opens people up, but shallow: it won't reach organs."},
+     {"id": "stab", "name": "stab", "verb": "stabs", "kind": "melee", "skill": "knife", "skill_mod": -1,
+      "damage": {"st": "thrust", "add": 0, "type": "impale"}, "parry": -1, "time_ms": 1000,
+      "//": "Harder to put where it counts, and devastating when it gets there."}
    ]},
   {"type": "item", "id": "baseball_bat", "name": "baseball bat", "glyph": "/", "weight": 3, "two_handed": true,
    "attacks": [
      {"id": "swing", "name": "swing", "verb": "clubs", "kind": "melee", "skill": "clubs",
-      "damage": {"st": "swing", "add": 1, "type": "crush"}, "parry": 0, "time_ms": 1200}
+      "damage": {"st": "swing", "add": 1, "type": "crush"}, "parry": 0, "time_ms": 1200},
+     {"id": "jab", "name": "jab", "verb": "jabs", "kind": "melee", "skill": "clubs", "skill_mod": 1,
+      "damage": {"st": "thrust", "add": 1, "type": "crush"}, "parry": 0, "time_ms": 800}
    ]},
   {"type": "item", "id": "sword", "name": "sabre", "glyph": "/", "weight": 3,
    "attacks": [
      {"id": "cut", "name": "cut", "verb": "cuts at", "kind": "melee", "skill": "sword",
       "damage": {"st": "swing", "add": 1, "type": "cut"}, "parry": 0, "time_ms": 1000},
-     {"id": "thrust", "name": "thrust", "verb": "lunges at", "kind": "melee", "skill": "sword",
+     {"id": "thrust", "name": "thrust", "verb": "lunges at", "kind": "melee", "skill": "sword", "skill_mod": -1,
       "damage": {"st": "thrust", "add": 1, "type": "impale"}, "parry": 0, "time_ms": 1000}
    ]},
   {"type": "item", "id": "pistol", "name": "9mm pistol", "glyph": "(", "weight": 2,
    "magazine": 15, "reload_ms": 2000,
    "attacks": [
-     {"id": "shoot", "name": "shoot", "verb": "shoots", "kind": "ranged", "skill": "guns",
+     {"id": "single", "name": "single shot", "verb": "shoots", "kind": "ranged", "skill": "guns", "skill_mod": 1,
+      "damage": {"dice": "2d6+2", "type": "pierce"}, "acc": 2, "rof": 1,
+      "range": 150, "time_ms": 1000, "//": "One careful shot: steadier, and no strays."},
+     {"id": "shoot", "name": "rapid fire", "verb": "fires at", "kind": "ranged", "skill": "guns",
       "damage": {"dice": "2d6+2", "type": "pierce"}, "acc": 2, "rof": 3, "recoil": 2,
       "range": 150, "time_ms": 1000}
    ]},
@@ -31,9 +38,14 @@
   {"type": "item", "id": "assault_rifle", "name": "assault rifle", "glyph": "/", "weight": 8,
    "two_handed": true, "magazine": 30, "reload_ms": 3000,
    "attacks": [
+     {"id": "single", "name": "single shot", "verb": "shoots", "kind": "ranged", "skill": "guns", "skill_mod": 1,
+      "damage": {"dice": "5d6", "type": "pierce"}, "acc": 5, "rof": 1,
+      "range": 500, "time_ms": 1000},
      {"id": "burst", "name": "burst", "verb": "fires a burst at", "kind": "ranged", "skill": "guns",
       "damage": {"dice": "5d6", "type": "pierce"}, "acc": 4, "rof": 3, "recoil": 2,
-      "range": 500, "time_ms": 1000}
+      "range": 500, "time_ms": 1000},
+     {"id": "butt", "name": "rifle butt", "verb": "rifle-butts", "kind": "melee", "skill": "brawling", "skill_mod": -1,
+      "damage": {"st": "thrust", "add": 2, "type": "crush"}, "parry": -1, "time_ms": 1000}
    ]},
 
   {"type": "item", "id": "ballistic_vest", "name": "ballistic vest", "glyph": "[",
@@ -46,7 +58,7 @@
   {"type": "item", "id": "leather_jacket", "name": "leather jacket", "glyph": "[",
    "armor": {"covers": ["torso", "vitals", "r_arm", "l_arm"], "dr": {"cut": 2, "*": 1}}},
   {"type": "item", "id": "suppressed_pistol", "copy-from": "pistol", "name": "suppressed pistol", "attacks": [{"id": "shoot", "name": "shoot", "verb": "shoots", "kind": "ranged", "skill": "guns", "damage": {"dice": "2d6+1", "type": "pierce"}, "acc": 2, "rof": 2, "recoil": 2, "range": 100, "time_ms": 1000, "noise": "suppressed"}]},
-  {"type": "item", "id": "shotgun", "name": "pump shotgun", "glyph": "/", "weight": 7, "two_handed": true, "magazine": 6, "reload_ms": 4000, "attacks": [{"id": "shoot", "name": "shoot", "verb": "blasts", "kind": "ranged", "skill": "guns", "damage": {"dice": "4d6", "type": "pierce"}, "acc": 3, "rof": 1, "range": 40, "time_ms": 1200}]},
+    {"type": "item", "id": "shotgun", "name": "pump shotgun", "glyph": "/", "weight": 7, "two_handed": true, "magazine": 6, "reload_ms": 4000, "attacks": [{"id": "shoot", "name": "shoot", "verb": "blasts", "kind": "ranged", "skill": "guns", "damage": {"dice": "4d6", "type": "pierce"}, "acc": 3, "rof": 1, "range": 40, "time_ms": 1200}, {"id": "butt", "name": "butt stroke", "verb": "butt-strokes", "kind": "melee", "skill": "brawling", "skill_mod": -1, "damage": {"st": "thrust", "add": 2, "type": "crush"}, "parry": -1, "time_ms": 1000}]},
   {"type": "item", "id": "frag_grenade", "name": "frag grenade", "glyph": "\u2022", "weight": 1, "throwable": {"fuse_ms": 3000}, "explosive": {"damage": "6d6", "radius": 2, "terrain": "4d6", "noise": "explosion", "fragments": {"dice": "2d6", "type": "pierce", "count": 15, "radius": 8}}},
   {"type": "item", "id": "flashbang", "name": "flashbang", "glyph": "\u2022", "weight": 1, "throwable": {"fuse_ms": 1500}, "explosive": {"damage": "1d6", "radius": 1, "noise": "explosion", "flash": {"radius": 5, "stun_ms": 4000, "dazzle_ms": 8000}}},
   {"type": "item", "id": "smoke_grenade", "name": "smoke grenade", "glyph": "\u2022", "weight": 1, "throwable": {"fuse_ms": 1500}, "explosive": {"gas": {"id": "smoke", "amount": 90, "radius": 2}, "noise": "thud"}},

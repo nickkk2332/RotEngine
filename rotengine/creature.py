@@ -182,8 +182,8 @@ class Creature:
 
     @property
     def active(self) -> bool:
-        """Still in the fight."""
-        return self.conscious
+        """Still in the fight: awake and hasn't given up."""
+        return self.conscious and "yielded" not in self.statuses
 
     @property
     def can_act(self) -> bool:

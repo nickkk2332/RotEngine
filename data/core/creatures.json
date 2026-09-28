@@ -26,6 +26,7 @@
    "stats": {"ST": 60, "CON": 20, "DEX": 11, "INT": 8, "WIS": 8},
    "skills": {"brawling": 14, "wrestling": 13, "clubs": 12, "throwing": 11},
    "stamina_bonus": 20,
+   "fearless": true,
    "grapple": {"chance": 0.35, "tear": 0.5,
                "//": "AI: chance to grab someone in reach instead of hitting them; tear: chance to go for a limb (and keep it as a club) rather than the neck."},
    "traits": ["tough_hide", "regeneration", "rage", "high_pain_threshold", "tireless"],

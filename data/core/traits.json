@@ -25,8 +25,8 @@
    "action_time_mult": {"ranged": 0.6}, "dodge_bonus": 1},
   {"type": "trait", "id": "super_speed_minor", "name": "enhanced speed", "speed_bonus": 2},
   {"type": "trait", "id": "super_speed", "name": "super speed",
-   "description": "Lives eight seconds for every one of yours: acts, reacts and recovers 8x as fast, and hits with the momentum of it (ST x sqrt(tempo) for muscle-powered attacks).",
-   "tempo": 8, "momentum_exponent": 0.5},
+   "description": "Lives eight seconds for every one of yours: acts, reacts and recovers 8x as fast, and hits with the momentum of it (ST x tempo^0.35 for muscle-powered attacks: about ST x 2 at tempo 8).",
+   "tempo": 8, "momentum_exponent": 0.35},
   {"type": "trait", "id": "night_vision", "name": "night-vision goggles", "description": "Sees in the dark almost as well as in daylight."},
   {"type": "trait", "id": "light_sleeper", "name": "sharp-eyed", "perception_bonus": 2},
   {"type": "trait", "id": "gas_mask", "name": "gas mask", "description": "Immune to tear gas."}

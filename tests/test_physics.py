@@ -97,8 +97,12 @@ def test_live_grenade_goes_off_wherever_it_is(content):
     sim.items.remove((pos, g))
     b.carried.append(g)
     actions.throw(sim, b, g, (3, 4, 0))
+    land = next(p for p, i in sim.items if i is g)
+    assert land[0] < 8  # it went back the way it came
+    near = [c for c in (a, b) if sim.distance_pos(c.pos, land) <= 2]
     sim.run_aftermath(4)
-    assert a.hp < a.max_hp
+    assert not any(i is g for _, i in sim.items)  # and it went off where it landed
+    assert all(c.hp < c.max_hp for c in near)
 
 
 def test_flashbang_blinds_those_looking(content):

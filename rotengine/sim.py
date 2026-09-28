@@ -390,14 +390,8 @@ class Sim:
             if ends and c.conscious:
                 return max(1, int((min(ends) - self.time) * c.tempo))
             return 1000  # out cold: waking is decided on the world tick
-        if c.hp <= 0:
-            below = int(-c.hp // c.max_hp)
-            if not check(self.rng, c.stat("CON") - below).success:
-                combat.knock_out(self, c, "from the trauma")
-                return 1000
         if c.stamina <= -c.max_stamina / 2:
-            combat.knock_out(self, c, "from exhaustion")
-            return 1000
+            combat.collapse(self, c, "from exhaustion")
         return None
 
     def _tick(self) -> None:
@@ -435,7 +429,7 @@ class Sim:
                 self.log(f"{c.name}'s {what}.", private_to=c.uid if c.controller == "player" else None)
         c.stamina = min(c.max_stamina, c.stamina + (0.5 if resting else 0.1) * c.tempo)
         if (c.statuses.get("unconscious", 0) is None and second % 5 == 0 and self._can_wake(c)
-                and check(self.rng, c.stat("CON")).success):
+                and combat.stays_conscious(self, c)):
             del c.statuses["unconscious"]  # (timed knockouts, like a choke, wear off by themselves)
             self.log(f"{c.name} comes to.")
             self.make_room(c)
@@ -483,10 +477,12 @@ class Sim:
             self._brain_death(c)
             return
         if c.conscious:
-            if b.blood < 60:
+            if b.blood < 50:
                 combat.knock_out(self, c, "from blood loss")
-            elif b.blood < 70 and second % 10 == 0 and not check(self.rng, c.stat("CON")).success:
-                combat.knock_out(self, c, "from blood loss")
+            elif second % 10 == 0 and (b.blood < 70 or c.hp < -c.max_hp) and not combat.stays_conscious(self, c):
+                combat.knock_out(self, c, "from blood loss" if b.blood < 70 else "from shock")
+            elif second % 10 == 5 and c.has_status("collapsed"):
+                self._try_to_rise(c)
         if b.bleed_rate > 0 and second % 10 == 0:
             # arterial bleeding (severed limbs, cut throats) rarely clots on its own
             r = check(self.rng, c.stat("CON") - (4 if b.bleed_rate > 1.0 else 0))
@@ -495,7 +491,18 @@ class Sim:
             if b.bleed_rate < 0.02:
                 b.bleed_rate = 0.0
 
+    def _try_to_rise(self, c: Creature) -> None:
+        """Collapsed: a WIS roll (minus pain) to get your legs back. Exhaustion
+        passes once you've got some breath back."""
+        if c.stamina <= 0:
+            return
+        if check(self.rng, c.stat("WIS") + int(c.trait_sum("pain_resist")) - c.pain()).success:
+            del c.statuses["collapsed"]
+            self.log(f"{c.name} gets their legs back under them.")
+
     def _can_wake(self, c: Creature) -> bool:
+        """Coming round (a stays_conscious roll every 5 s) needs the things
+        that put you under to have eased."""
         b = c.body
-        return (c.hp > 0 and b.blood >= 60 and c.stamina > 0 and b.oxygen >= 50
+        return (c.hp > -2 * c.max_hp and b.blood >= 60 and c.stamina > 0 and b.oxygen >= 50
                 and not c.has_status("cardiac_arrest") and not c.status_sum("hypoxia") and b.hypoxia < 50)
