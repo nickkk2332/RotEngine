@@ -47,6 +47,15 @@ def step(sim: "Sim", c: "Creature", to: "Pos") -> int | None:
         return None
     if to == getattr(victim, "pos", None):
         return None
+    if victim is not None and victim.conscious and victim.grappled_by is c:
+        # hauling someone who's fighting you: a hold contest every step
+        from .grapple import _contest
+        c.exert(0.3)
+        if not _contest(sim, c, victim):
+            with sim.focus(c.pos, victim.pos):
+                sim.log(f"{c.name} hauls at {victim.name}, who digs in.")
+            perception.emit_noise(sim, c, c.pos, "struggle")
+            return 1000
     old = c.pos
     sim.move_creature(c, to)
     c.exert(MOVE_EXERTION * (3 if victim else 1))

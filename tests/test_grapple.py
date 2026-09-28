@@ -278,3 +278,37 @@ def test_brute_ai_grabs_and_tears(content):
         text = "\n".join(sim.lines)
         seen |= {w for w in ("torn off", "is left holding", "grabs", "bear hug", "head around") if w in text}
     assert {"torn off", "is left holding", "grabs"} <= seen and seen & {"bear hug", "head around"}
+
+
+def test_dragging_someone_who_fights_it(content):
+    """You can haul a conscious person straight away, but each step is a
+    contest: sometimes they dig in and you get nowhere."""
+    moved = stuck = 0
+    for seed in range(20):
+        sim, a, t = held(content, "torso", seed=seed)
+        for _ in range(4):
+            before = a.pos
+            actions.step(sim, a, (a.pos[0] - 1, a.pos[1], 0))
+            if a.pos != before:
+                moved += 1
+                assert t.pos == before  # they come along
+            else:
+                stuck += 1
+    assert moved > 0 and stuck > 0
+
+
+def test_drag_straight_from_the_hold_menu():
+    from test_play import arena, new_app
+    from rotengine.ui.game import GameScreen
+    scenario = {"id": "yard", "name": "Yard", "start_alert": False, "levels": [["," * 12] * 5],
+                "teams": {"you": [{"creature": "hulk", "at": [5, 2, 0]}],
+                          "them": [{"creature": "sentry", "at": [6, 2, 0], "facing": [1, 0]}]}}
+    app = new_app()
+    content = app.content_for(scenario)
+    sim = arena.build(scenario, content, seed=1)
+    app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 1)
+    p, t = g.player, sim.creatures[1]
+    grapple._hold(p, t, "torso", rear=True)
+    g.mode = "grapple"
+    app.handle_key("left")
+    assert p.pos == (4, 2, 0) and t.pos == (5, 2, 0) and g.mode == "grapple"

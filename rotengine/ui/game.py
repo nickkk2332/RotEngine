@@ -551,6 +551,13 @@ class GameScreen(Screen):
         if key == "esc" or p.grappling is None:
             self.mode = "play"
             return None
+        d = DIRECTIONS.get(key)  # arrows/numpad only: letters pick from the menu
+        if d is not None:  # drag them (straight from the hold menu)
+            x, y, z = p.pos
+            self._do(actions.step(self.sim, p, (x + d[0], y + d[1], z)), "You can't drag them that way.")
+            if p.grappling is None:
+                self.mode = "play"
+            return None
         if key == "L":
             self.mode = "play"
             return self._do(grapple.release(self.sim, p))
@@ -590,7 +597,7 @@ class GameScreen(Screen):
         box(con, 1, 4, w, 7 + len(options), f"Holding {t.name} by the {grip} ({state})")
         for i, (label, note, _) in enumerate(options):
             con.print(3, 6 + i, f"{chr(ord('a') + i)}  {label:<24}{note}"[:w - 4], fg=WHITE)
-        con.print(3, 7 + len(options), "L let go · Esc back (then move to drag)"[:w - 4], fg=GREY)
+        con.print(3, 7 + len(options), "move: drag them · L let go · Esc back"[:w - 4], fg=GREY)
         con.print(3, 8 + len(options), f"your ST {p.stat('ST')} / Wrestling {p.skill('wrestling')} vs their ST "
                   f"{t.stat('ST')} / Wrestling {t.skill('wrestling')}"[:w - 4], fg=DARK)
 
@@ -1436,7 +1443,7 @@ class GameScreen(Screen):
             "usemenu": "letter: use it · Esc: close",
             "pickup": "letter: take it · Esc: close",
             "messages": "↑↓ scroll · PgUp/PgDn page · Home/End · Esc close",
-            "grapple": "letter: do it · T: hurl · L: let go · Esc: back",
+            "grapple": "letter: do it · move: drag · T: hurl · L: let go · Esc: back",
             "grab": "letter: grab there · Tab: someone else · Esc: back",
         }
         con.print(0, con.height - 1, hints.get(self.mode, "")[:con.width], fg=DARK)
