@@ -429,3 +429,30 @@ def test_letters_work_without_text_input_events():
     # from now on letters come from TextInput only
     assert r.read(down("b")) is None
     assert r.read(ev.TextInput(text="b")) == "b"
+
+
+def test_threats_from_above_and_the_message_log():
+    app = new_app("hulk_vs_squad", "the Hulk", seed=3)
+    g = app.screen
+    for k in "..":
+        app.handle_key(k)
+    text = screen_text(app)
+    assert "is aiming at you" in text and "above" in text
+    app.handle_key("M")
+    assert g.mode == "messages" and "Message log" in screen_text(app) and "takes aim" in screen_text(app)
+    app.handle_key("up")
+    app.handle_key("esc")
+    assert g.mode == "play"
+
+
+def test_facing_arrows_show_where_enemies_look():
+    from rotengine.ui.game import GameScreen
+    scenario = {"id": "yard", "name": "Yard", "start_alert": False, "levels": [["," * 12] * 5],
+                "teams": {"you": [{"creature": "operative", "at": [2, 2, 0]}],
+                          "them": [{"creature": "sentry", "at": [6, 2, 0], "facing": [1, 0]}]}}
+    app = new_app()
+    content = app.content_for(scenario)
+    sim = arena.build(scenario, content, seed=1)
+    app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 1)
+    row = [line for line in screen_text(app).splitlines() if "@" in line and "→" in line]
+    assert row and row[0].index("→") == row[0].index("g") + 1  # the sentry (g) looks east, away from you

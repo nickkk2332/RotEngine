@@ -6,6 +6,7 @@ AI uses), and hands the cost back to the sim.
 """
 from __future__ import annotations
 
+import math
 import random
 from typing import TYPE_CHECKING
 
@@ -56,6 +57,7 @@ HELP = [
     ("< >", "go up / down stairs; > on a stairwell takes you to the next floor"),
     ("[ ]", "look at the level below / above"),
     ("x", "look around (inspect anyone's wounds)"),
+    ("M", "message log: scroll back through what happened"),
     ("Esc", "quit to the menu"),
 ]
 
@@ -129,6 +131,9 @@ class GameScreen(Screen):
         self.summary: list[str] = []
         self.show_cones = False
         self._grab_who: Creature | None = None
+        self.journal: list[tuple[str, tuple]] = []  # what you witnessed, as it happened
+        self._log_i = 0                              # how far into sim.lines the journal has read
+        self.log_scroll = 0
         self.status = self.sim.advance()
         self._on_turn()
 
@@ -182,6 +187,26 @@ class GameScreen(Screen):
         for pos in self.visible:
             self.seen[pos] = self._tile(pos)
         self.view_z = self.player.pos[2]
+        self._read_log()
+
+    def _read_log(self) -> None:
+        """Copy new log lines the player witnessed into the journal, judged
+        by what they could see when it happened."""
+        sim = self.sim
+        name = self.player.name
+        for raw, meta in zip(sim.lines[self._log_i:], sim.line_meta[self._log_i:]):
+            if not self._witnessed(raw, meta):
+                continue
+            body = raw.split("] ", 1)[-1]
+            fg = GREY
+            if " dies" in body or "falls unconscious" in body or "goes limp" in body:
+                fg = RED
+            elif body.lstrip().startswith(name):
+                fg = YELLOW
+            elif name in body or "aiming at you" in body:
+                fg = ORANGE
+            self.journal.append((raw, fg))
+        self._log_i = len(sim.lines)
 
     def _do(self, cost: int | None, fail: str = "You can't do that right now.") -> None:
         if cost is None:
@@ -336,6 +361,9 @@ class GameScreen(Screen):
             return None
         if key == "@":
             self.mode = "sheet"
+            return None
+        if key == "M":
+            self.mode, self.log_scroll = "messages", 0
             return None
         if key == "R":
             return self._rest()
@@ -755,6 +783,8 @@ class GameScreen(Screen):
             self.notice = "You can't go down right now."
             return None
         self.sim = run.sim
+        self._log_i = 0
+        self.journal.append((f"--- floor {run.depth}: {run.plan.name} ---", TITLE))
         self.seen, self.visible, self.cursor = {}, set(), None
         self.mode = "play"
         self.status = self.sim.advance()
@@ -881,6 +911,37 @@ class GameScreen(Screen):
             return self._do(actions.pick_up(self.sim, self.player, which=near[ord(key) - ord("a")]),
                             "You can't pick that up.")
         return None
+
+    LOG_PAGE = 36
+
+    def _key_messages(self, key: str):
+        """Scroll back through everything you saw and heard."""
+        total = self._journal_rows()
+        top = max(0, len(total) - self.LOG_PAGE)
+        step = {"up": 1, "k": 1, "down": -1, "j": -1, "upright": self.LOG_PAGE, "downright": -self.LOG_PAGE,
+                "upleft": top, "downleft": -top}
+        if key in step:
+            self.log_scroll = max(0, min(top, self.log_scroll + step[key]))
+        elif key in ("esc", "M", "q", "enter"):
+            self.mode = "play"
+        return None
+
+    def _journal_rows(self) -> list[tuple[str, tuple]]:
+        rows = []
+        for raw, fg in self.journal:
+            rows += [(part, fg) for part in wrap(raw, 94, indent="          ")]
+        return rows
+
+    def _render_messages(self, con) -> None:
+        rows = self._journal_rows()
+        page = self.LOG_PAGE
+        end = len(rows) - self.log_scroll
+        shown = rows[max(0, end - page):end]
+        box(con, 1, 1, con.width - 2, page + 4, f"Message log ({len(self.journal)} lines)")
+        for i, (text, fg) in enumerate(shown):
+            con.print(3, 2 + i, text[:con.width - 6], fg=fg)
+        where = "newest" if self.log_scroll == 0 else f"{self.log_scroll} lines back"
+        con.print(3, page + 3, f"↑↓ scroll · PgUp/PgDn page · Home/End · Esc close  ({where})", fg=DARK)
 
     def _key_sheet(self, key: str):
         self.mode = "play"
@@ -1021,14 +1082,50 @@ class GameScreen(Screen):
                 else:
                     fg = YELLOW if c is self.player else GREEN if c.team == self.player.team else RED
                     marks[c.pos[:2]] = (c.glyph, fg, self._alert_bg(c))
+        # people you can see on other levels: drawn where they stand, tinted
+        # purple above you and blue below (magenta if they're aiming at you)
+        for c in self.sim.creatures:
+            if c is self.player or c.dead or c.pos[2] == z or c.pos[:2] in marks or not self._sees(c):
+                continue
+            above = c.pos[2] > z
+            fg = (200, 170, 255) if above else (150, 190, 255)
+            if c.team == self.player.team:
+                fg = (140, 230, 160)
+            bg = self._alert_bg(c) if c.aim_target == self.player.uid else ((55, 25, 85) if above else (20, 35, 70))
+            marks[c.pos[:2]] = (c.glyph if c.active else "&", fg, bg)
         for (x, y), (ch, fg, bg) in marks.items():
             if ox <= x < ox + MAP_W and oy <= y < oy + MAP_H:
                 con.print(MAP_X + x - ox, MAP_Y + y - oy, ch, fg=fg, bg=bg)
+        self._render_facing(con, marks, z)
         t = self.target
-        if t is not None and t.pos[2] == z and self._sees(t):
+        if t is not None and self._sees(t) and (t.pos[2] == z or t.pos[:2] in marks):
             self._highlight(con, t.pos, TARGET_BG)
+            tx, ty = t.pos[0] - ox, t.pos[1] - oy
+            if 0 <= tx < MAP_W and 0 <= ty < MAP_H:
+                con.fg[MAP_X + tx, MAP_Y + ty] = BLACK
         if self.cursor is not None:
             self._highlight(con, self.cursor, CURSOR_BG)
+
+    FACING_GLYPH = {(1, 0): "→", (-1, 0): "←", (0, -1): "↑", (0, 1): "↓",
+                    (1, 1): "\\", (-1, -1): "\\", (1, -1): "/", (-1, 1): "/"}
+
+    def _render_facing(self, con, marks: dict, z: int) -> None:
+        """A small arrow on the tile in front of each enemy you can see, so
+        you know which way they're looking (v shows the whole cone)."""
+        ox, oy = self._camera()
+        w = self.sim.world
+        for c in self.sim.creatures:
+            if c.team == self.player.team or not c.active or c.pos[2] != z or not self._sees(c):
+                continue
+            dx, dy = (int(math.copysign(1, v)) if v else 0 for v in c.facing)
+            front = (c.pos[0] + dx, c.pos[1] + dy, z)
+            if (dx, dy) == (0, 0) or front[:2] in marks or front not in self.visible or not w.passable(front):
+                continue
+            sx, sy = front[0] - ox, front[1] - oy
+            if 0 <= sx < MAP_W and 0 <= sy < MAP_H:
+                aware = perception.aware_of(c, self.player)
+                con.print(MAP_X + sx, MAP_Y + sy, self.FACING_GLYPH[(dx, dy)],
+                          fg=(255, 90, 70) if aware else (200, 150, 60))
 
     def _hazards(self, pos, ch, fg):
         """Fire and gas drawn over a visible tile."""
@@ -1051,10 +1148,20 @@ class GameScreen(Screen):
             bg = (v, v, v // 4)
         return ch, fg, bg
 
+    AIMING_BG = (200, 30, 170)  # magenta: this one is lining up a shot at you
+
+    def _aiming_at_me(self) -> list[Creature]:
+        p = self.player
+        return [c for c in self.sim.creatures if c.team != p.team and c.active
+                and c.aim_target == p.uid and self._sees(c)]
+
     def _alert_bg(self, c: Creature):
-        """Background on an enemy's glyph: amber = suspicious, red = has seen you."""
+        """Background on an enemy's glyph: magenta = aiming at you, red = has
+        seen you, amber = suspicious."""
         if c.team == self.player.team:
             return None
+        if c.aim_target == self.player.uid:
+            return self.AIMING_BG
         aw = c.awareness.get(self.player.uid)
         if aw is not None and aw.level >= perception.AWARE:
             return SPOTTED_BG
@@ -1184,6 +1291,18 @@ class GameScreen(Screen):
         else:
             con.print(x, y, "unseen", fg=GREEN)
         y += 1
+        for c in self._aiming_at_me()[:3]:
+            dz = c.pos[2] - p.pos[2]
+            where = " (above)" if dz > 0 else " (below)" if dz < 0 else ""
+            con.print(x, y, f"! {c.name} is aiming at you{where}"[:w], fg=(255, 90, 220))
+            y += 1
+        others = [c for c in sim.creatures if c.team != p.team and c.active and c.pos[2] != p.pos[2]
+                  and self._sees(c)]
+        if others:
+            up = sum(c.pos[2] > p.pos[2] for c in others)
+            words = ([f"{up} above"] if up else []) + ([f"{len(others) - up} below"] if len(others) - up else [])
+            con.print(x, y, ("enemies " + ", ".join(words) + " ([ ] to look)")[:w], fg=(200, 170, 255))
+            y += 1
         if p.grappling is not None:
             h = p.grappling
             state = "dead" if h.dead else "out cold" if not h.conscious else f"choked {h.choked}s" if h.choked else ""
@@ -1280,18 +1399,9 @@ class GameScreen(Screen):
                 y += 1
 
     def _render_log(self, con) -> None:
+        self._read_log()
         lines: list[tuple[str, tuple]] = []
-        name = self.player.name
-        witnessed = [raw for raw, meta in zip(self.sim.lines, self.sim.line_meta) if self._witnessed(raw, meta)]
-        for raw in witnessed[-40:]:
-            body = raw.split("] ", 1)[-1]
-            fg = GREY
-            if " dies" in body or "falls unconscious" in body:
-                fg = RED
-            elif body.lstrip().startswith(name):
-                fg = YELLOW
-            elif name in body:
-                fg = ORANGE
+        for raw, fg in self.journal[-40:]:
             for part in wrap(raw, MAP_W, indent="          "):
                 lines.append((part, fg))
         con.draw_rect(0, LOG_Y - 1, MAP_W, 1, ord("─"), fg=DIM)
@@ -1325,6 +1435,7 @@ class GameScreen(Screen):
             "itemmenu": "letter: do it · Esc: back",
             "usemenu": "letter: use it · Esc: close",
             "pickup": "letter: take it · Esc: close",
+            "messages": "↑↓ scroll · PgUp/PgDn page · Home/End · Esc close",
             "grapple": "letter: do it · T: hurl · L: let go · Esc: back",
             "grab": "letter: grab there · Tab: someone else · Esc: back",
         }
