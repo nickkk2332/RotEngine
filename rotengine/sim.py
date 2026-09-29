@@ -13,8 +13,8 @@ reproducible.
 """
 from __future__ import annotations
 
+import functools
 import heapq
-import itertools
 import random
 from contextlib import contextmanager
 from typing import Callable, Iterator
@@ -54,7 +54,7 @@ class Sim:
         self._light: tuple[int, float, list] | None = None
         self.fighting = True  # False during the aftermath: nobody left to fight
         self._queue: list[tuple[int, int, int]] = []  # (time, seq, uid); uid -1 = world tick
-        self._seq = itertools.count()
+        self._seq_n = 0  # plain ints, not itertools.count (which doesn't pickle on newer Pythons)
         self._by_uid: dict[int, Creature] = {}
         self._terrain_dirty = False
         self.path_failures: dict[tuple, int] = {}  # AI memo of recently failed searches
@@ -64,14 +64,33 @@ class Sim:
         self.flights: list = []           # things in the air (flight.py)
         self.timed_shots = True           # bullets take time to arrive (flight.launch_tracer)
         self.fx: list[tuple] = []         # (pos, kind) visual cues for the UI: hit, miss, block, crit
+        self.fx_seq = 0
         self.flight_started = False       # set when something takes off (the UI animates it)
-        self._event_ids = itertools.count(2)
-        heapq.heappush(self._queue, (start_time + TICK_MS, next(self._seq), -1))
+        self._event_n = 1
+        heapq.heappush(self._queue, (start_time + TICK_MS, self._next_seq(), -1))
+
+    def __setstate__(self, state: dict) -> None:
+        # saves from before these existed
+        state.setdefault("flights", [])
+        state.setdefault("flight_started", False)
+        state.setdefault("timed_shots", True)
+        state.setdefault("fx", [])
+        state.setdefault("fx_seq", 0)
+        for old, new, start in (("_seq", "_seq_n", 0), ("_event_ids", "_event_n", 1)):
+            if old in state:  # an itertools.count: carry on from where it got to
+                state[new] = next(state.pop(old)) - (0 if new == "_seq_n" else 1)
+            state.setdefault(new, start)
+        self.__dict__.update(state)
+
+    def _next_seq(self) -> int:
+        self._seq_n += 1
+        return self._seq_n
 
     # -- bookkeeping -------------------------------------------------------
     def cue(self, pos: Pos, kind: str) -> None:
         """A visual cue for whoever's watching (the UI flashes the tile)."""
         self.fx.append((pos, kind))
+        self.fx_seq += 1  # how many cues ever: the UI reads by this, so trimming doesn't replay any
         if len(self.fx) > 200:
             del self.fx[:100]
 
@@ -125,17 +144,22 @@ class Sim:
         self.creatures.append(c)
         self._by_uid[c.uid] = c
         self._schedule(c, self.time + 1)
+        for item in [c.wielded, *c.carried]:  # a fuse still burning comes along
+            if item is not None and item.armed and getattr(item, "fuse_at", None) is not None:
+                self.schedule_event(max(self.time + 1, item.fuse_at),
+                                    functools.partial(physics._detonate, self, item, c))
         return c
 
     def _schedule(self, c: Creature, at: int) -> None:
         c.next_time = at
-        heapq.heappush(self._queue, (at, next(self._seq), c.uid))
+        heapq.heappush(self._queue, (at, self._next_seq(), c.uid))
 
     def schedule_event(self, at: float, fn: Callable[[], None]) -> None:
         """Run fn at world time `at` (a grenade's fuse, say)."""
-        eid = -next(self._event_ids)
+        self._event_n += 1
+        eid = -self._event_n
         self._events[eid] = fn
-        heapq.heappush(self._queue, (int(at), next(self._seq), eid))
+        heapq.heappush(self._queue, (int(at), self._next_seq(), eid))
 
     def apply_status(self, c: Creature, status_id: str, duration_ms: float) -> None:
         """Timed status. 'subjective' statuses (stun, agony) run on the
@@ -149,10 +173,16 @@ class Sim:
         acts or defends, so a 250 ms stun really is 250 ms."""
         for sid, until in list(c.statuses.items()):
             if until is not None and until <= self.time:
-                del c.statuses[sid]
                 if sid == "unconscious" and not c.dead:
+                    if not self._can_wake(c):
+                        c.statuses[sid] = None  # the knock's worn off, but they're in no state to come round
+                        continue
+                    del c.statuses[sid]
                     with self.focus(c.pos):
                         self.log(f"{c.name} comes to.")
+                    self.make_room(c)
+                    continue
+                del c.statuses[sid]
 
     def drop(self, pos: Pos, item: Item) -> None:
         self.items.append((pos, item))
@@ -225,6 +255,16 @@ class Sim:
         c.aim_target = None
         self.check_fall(c)
 
+    def resting_place(self, pos: Pos) -> Pos:
+        """Where something dropped at pos comes to rest: down through open air
+        to the first floor, or on top of rubble or a wall stub."""
+        x, y, z = pos
+        while z > 0 and not self.world.supported((x, y, z)):
+            if self.world.fill_mat((x, y, z - 1)).get("solid"):
+                break
+            z -= 1
+        return (x, y, z)
+
     def check_fall(self, c: Creature) -> None:
         x, y, z = c.pos
         levels = 0
@@ -288,6 +328,7 @@ class Sim:
                 combat.deal_damage(self, below, Dice(3, 6).roll(self.rng), "crush", knockback_ok=False)
         for c in self.creatures:
             self.check_fall(c)
+        self.items[:] = [(self.resting_place(p), i) for p, i in self.items]  # the floor went: so do they
 
     # -- hooks -------------------------------------------------------------
     def fire_hooks(self, c: Creature, hook: str, target: Creature | None = None,
@@ -344,7 +385,7 @@ class Sim:
             alive = lambda: any(c.controller == "player" and not c.dead for c in self.creatures)  # noqa: E731
             stop = self._loop(alive, self.time + max_ms, stop_for_player=True, stop_on_flight=stop_on_flight)
             return stop if stop in ("player", "flight") else "over" if not alive() else "timeout"
-        stop = self._loop(lambda: len(self.active_teams()) > 1, max_ms, stop_for_player=True,
+        stop = self._loop(lambda: len(self.active_teams()) > 1, self.time + max_ms, stop_for_player=True,
                           stop_on_flight=stop_on_flight)
         if stop in ("player", "flight"):
             return stop
@@ -381,7 +422,7 @@ class Sim:
             self.time = at
             if uid == -1:
                 self._tick()
-                heapq.heappush(self._queue, (at + TICK_MS, next(self._seq), -1))
+                heapq.heappush(self._queue, (at + TICK_MS, self._next_seq(), -1))
             elif uid < -1:
                 fn = self._events.pop(uid, None)
                 if fn is not None:
@@ -541,4 +582,5 @@ class Sim:
         that put you under to have eased."""
         b = c.body
         return (c.hp > -combat.SHOCK_OUT * c.max_hp and b.blood >= 55 and b.oxygen >= 50
+                and c.airway_blocked_until <= self.time
                 and not c.has_status("cardiac_arrest") and not c.status_sum("hypoxia") and b.hypoxia < 50)

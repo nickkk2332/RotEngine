@@ -313,9 +313,12 @@ def _try_generate(content: Content, dungeon: dict, fdef: dict, depth: int,
         spawns.append(Spawn(boss["creature"], pos, level_monsters.get("team", "hostile"), facing=_rand_facing(rng)))
         taken.add(pos)
     # some of them walk a beat between rooms
+    beat_rooms = [i for i in range(len(rooms)) if i != start_room]  # nobody walks through where you start
     for s in spawns:
-        if rng.random() < fdef.get("patrol_chance", 0.25):
-            beat = rng.sample(range(len(rooms)), min(len(rooms), rng.randint(2, 3)))
+        if boss and s.creature == boss["creature"]:
+            continue  # the boss keeps to its room
+        if rng.random() < fdef.get("patrol_chance", 0.25) and beat_rooms:
+            beat = rng.sample(beat_rooms, min(len(beat_rooms), rng.randint(2, 3)))
             s.patrol = [s.pos] + [rng.choice(rooms[i].floor) for i in beat]
     items: list[tuple[str, Pos2]] = []
     level_items = fdef.get("items", {})
@@ -326,11 +329,15 @@ def _try_generate(content: Content, dungeon: dict, fdef: dict, depth: int,
         iid = _pick_item(content, group, depth, rng)
         if iid:
             items.append((iid, pos))
+            taken.add(pos)
     for _ in range(roll_range(rng, level_items.get("extra"), 0)):
         ri = rng.randrange(len(rooms))
         iid = _pick_item(content, level_items.get("group"), depth, rng)
-        if iid:
-            items.append((iid, rng.choice(rooms[ri].floor)))
+        free = [p for p in rooms[ri].floor if p not in taken]
+        if iid and free:
+            pos = rng.choice(free)
+            items.append((iid, pos))
+            taken.add(pos)
 
     plan = LevelPlan(fdef.get("name", f"depth {depth}"), depth, W, H, tiles, rooms, start, exit_pos,
                      spawns, items, fdef.get("ambient_light", 1.0), final)
@@ -446,13 +453,16 @@ def _room_distances(start: int, edges, rooms, links) -> dict[int, int]:
     for a, b in edges:
         adj.setdefault(a, []).append(b)
         adj.setdefault(b, []).append(a)
-    dist, todo = {start: 0}, [start]
-    while todo:
-        cur = todo.pop(0)
+    dist, todo = {start: 0}, [(0, start)]
+    while todo:  # Dijkstra: shortest walk through the corridors, room to room
+        d, cur = heapq.heappop(todo)
+        if d > dist[cur]:
+            continue
         for n in adj.get(cur, []):
-            if n not in dist:
-                dist[n] = dist[cur] + _dist(rooms[cur].center, rooms[n].center)
-                todo.append(n)
+            nd = d + _dist(rooms[cur].center, rooms[n].center)
+            if nd < dist.get(n, nd + 1):
+                dist[n] = nd
+                heapq.heappush(todo, (nd, n))
     return dist
 
 

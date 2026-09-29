@@ -24,7 +24,7 @@ from .creature import Creature, Item
 from .sim import Sim
 from .world import World
 
-SAVE_VERSION = 1
+SAVE_VERSION = 2  # bump whenever what gets pickled changes shape: old saves are refused, not crashed on
 SAVE_DIR = Path.home() / ".rotengine"
 PLAYER_TEAM = "you"
 
@@ -117,9 +117,9 @@ class Run:
         if not self.at_exit() or not p.can_act or self.depth >= self.last_depth:
             return False
         from .grapple import release
-        release(self.sim, p)
         if p.grappled_by is not None:
             return False
+        release(self.sim, p)
         self.sim.awaiting = None
         self.enter(self.depth + 1)
         return True
@@ -129,7 +129,8 @@ class Run:
         boss = mapgen.floor_for(self.dungeon, self.depth).get("boss")
         if not boss:
             return None
-        return next((c for c in self.sim.creatures if c.template["id"] == boss["creature"]), None)
+        return next((c for c in self.sim.creatures
+                     if c.template["id"] == boss["creature"] and c is not self.player), None)
 
     @property
     def state(self) -> str:
@@ -161,8 +162,12 @@ class Run:
         path = path or save_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        with open(tmp, "wb") as f:
-            pickle.dump({"version": SAVE_VERSION, "run": self}, f, protocol=pickle.HIGHEST_PROTOCOL)
+        try:
+            with open(tmp, "wb") as f:
+                pickle.dump({"version": SAVE_VERSION, "run": self}, f, protocol=pickle.HIGHEST_PROTOCOL)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
         tmp.replace(path)  # never leave half a save behind
         return path
 
@@ -180,10 +185,14 @@ def load(path: Path | None = None) -> Run:
     try:
         with open(path, "rb") as f:
             data = pickle.load(f)
-    except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError) as e:
+    except FileNotFoundError as e:
+        raise SaveError("There's no saved run.") from e
+    except Exception as e:  # truncated, corrupted, or not a save at all
         raise SaveError(f"can't read the save at {path}: {e}") from e
     if not isinstance(data, dict) or data.get("version") != SAVE_VERSION:
         raise SaveError(f"the save at {path} is from a different version of the game")
+    if not isinstance(data.get("run"), Run):
+        raise SaveError(f"the save at {path} is damaged")
     return data["run"]
 
 

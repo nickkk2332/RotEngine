@@ -1,7 +1,11 @@
 """Regression tests for bugs found in review."""
-from rotengine import combat
+import pickle
+
+from rotengine import actions, combat, grapple, perception
 from rotengine.sim import Sim
 from rotengine.world import World
+
+from test_stealth import yard
 
 
 def open_arena(content, seed=0, w=14, h=9, d=1):
@@ -159,3 +163,76 @@ def test_bad_spawn_positions_are_rejected(content):
                   {"creature": "thug", "at": [9, 9, 0]}):               # out of bounds
         with pytest.raises(arena.ScenarioError):
             arena.build({**base, "teams": {**base["teams"], "a": [group]}}, content, 0)
+
+
+# -- second review ------------------------------------------------------------
+def test_a_shot_from_nowhere_still_cant_be_dodged(content):
+    """The bang arrives with the bullet: hearing it doesn't let you dodge it."""
+    dodged = 0
+    for seed in range(60):
+        sim = yard(content, seed=seed)
+        shooter = sim.spawn("soldier", "a", (2, 4, 0))
+        t = sim.spawn("human", "b", (12, 4, 0))
+        t.facing = (-1, 0)  # looking right at him, but hasn't noticed him
+        plan = next(p for p in combat.attack_plans(sim, shooter, t, allow_aim=False)
+                    if p.attack["kind"] == "ranged" and p.attack.get("rof", 1) == 1)
+        combat.resolve_attack(sim, shooter, t, plan)
+        sim._loop(lambda: True, sim.time + 200)
+        dodged += any("dodges" in line for line in sim.lines)
+    assert dodged == 0
+
+
+def test_a_knockout_timer_doesnt_wake_someone_in_no_state_to(content):
+    sim = yard(content)
+    c = sim.spawn("human", "a", (5, 4, 0))
+    combat.knock_out(sim, c, "", 1000)
+    c.body.blood = 40
+    sim.time += 2000
+    sim.expire_statuses(c)
+    assert not c.conscious and c.statuses["unconscious"] is None
+
+
+def test_the_dead_let_go(content):
+    sim = yard(content)
+    a = sim.spawn("operative", "a", (5, 4, 0))
+    b = sim.spawn("human", "b", (6, 4, 0))
+    grapple._hold(a, b, "neck", rear=True)
+    combat.kill(sim, a, "test")
+    assert a.grappling is None and b.grappled_by is None
+
+
+def test_no_drawing_a_knife_into_a_held_arm(content):
+    sim = yard(content)
+    s = sim.spawn("soldier", "s", (10, 4, 0))
+    op = sim.spawn("operative", "o", (9, 4, 0))
+    grapple._hold(op, s, "r_arm", rear=False)
+    knife = next(i for i in s.carried if i.attacks and not i.data.get("two_handed"))
+    assert actions.wield(sim, s, knife) is None
+
+
+def test_a_critical_burst_always_hits_something(content):
+    sim = yard(content)
+    a = sim.spawn("thug", "a", (4, 4, 0))
+    b = sim.spawn("human", "b", (5, 4, 0))
+    perception.make_all_aware(sim)
+    sim.timed_shots = False
+    plan = next(p for p in combat.attack_plans(sim, a, b, allow_aim=False) if p.attack.get("rof", 1) > 1)
+    plan.skill = 3
+    sim.rng.randint = lambda lo, hi: 1  # every die a 1: a roll of 3, a critical
+    combat.resolve_attack(sim, a, b, plan)
+    assert b.hp < b.max_hp
+
+
+def test_saves_dont_depend_on_pickling_iterators(content):
+    sim = yard(content)
+    sim.spawn("human", "a", (5, 4, 0))
+    back = pickle.loads(pickle.dumps(sim))
+    back.schedule_event(back.time + 10, lambda: None)
+    assert isinstance(back._seq_n, int) and isinstance(back._event_n, int)
+
+
+def test_flashes_arent_replayed_when_the_list_is_trimmed(content):
+    sim = yard(content)
+    for _ in range(450):
+        sim.cue((1, 1, 0), "hit")
+    assert sim.fx_seq == 450 and len(sim.fx) <= 200

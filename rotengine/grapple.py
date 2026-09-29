@@ -63,9 +63,9 @@ def grab_penalty(t: "Creature", what: str) -> int:
         w = t.wielded
         if w is None:
             return 0
-        if any(a.get("kind") == "melee" for a in w.attacks):
-            return WEAPON_GRAB_PENALTY["melee"]
-        return WEAPON_GRAB_PENALTY["long" if w.data.get("two_handed") else "ranged"]
+        if any(a.get("kind") == "ranged" for a in w.attacks):  # a rifle with a butt stroke is still a long gun
+            return WEAPON_GRAB_PENALTY["long" if w.data.get("two_handed") else "ranged"]
+        return WEAPON_GRAB_PENALTY["melee"]
     return t.body.part(what).data.get("hit_penalty", 0)
 
 
@@ -146,7 +146,7 @@ def grab(sim: "Sim", c: "Creature", target: "Creature", what: str = "torso") -> 
         return GRAB_MS
     c.exert(0.3)
     defense = combat.defense_against(sim, c, target, "melee")
-    _noticed_before = perception.aware_of(target, c) if target.controller != "player" else defense is not None
+    _noticed_before = combat._noticed(sim, target, c)
     skill = grab_skill(c, target, what, unaware=defense is None)
     roll = check(sim.rng, skill)
     training.practice(sim, c, "wrestling", skill, roll.success)
@@ -256,6 +256,14 @@ def _controls_weapon_hand(t: "Creature", part) -> bool:
             if part.id in (hand.id, hand.data.get("parent")):
                 return True
     return False
+
+
+def weapon_pinned(t: "Creature") -> bool:
+    """Someone has hold of your weapon, or of the hand (or arm) it's in: no
+    drawing or swapping, and nothing else to draw into that hand."""
+    held = restrained(t)
+    return WEAPON in held or any(p.id in held and p.data.get("primary")
+                                 for p in t.body.parts.values() if "grasp" in p.tags)
 
 
 def restrained(t: "Creature") -> set[str]:
@@ -621,7 +629,8 @@ def struggle(sim: "Sim", c: "Creature") -> int | None:
     base = _weapon_resist(c) if on_weapon else max(c.stat("ST"), c.skill("wrestling"))
     mine = check(sim.rng, base - penalty)
     training.practice(sim, c, "wrestling", base - penalty, mine.success)
-    theirs = check(sim.rng, max(g.stat("ST"), g.skill("wrestling")) + (0 if on_weapon else 2))
+    theirs = check(sim.rng, max(g.stat("ST"), g.skill("wrestling")) + (0 if on_weapon else 2)
+                   - _wrestling_penalty(g))
     perception.emit_noise(sim, c, c.pos, "struggle")
     with sim.focus(c.pos, g.pos):
         if mine.success and (not theirs.success or mine.margin > theirs.margin):

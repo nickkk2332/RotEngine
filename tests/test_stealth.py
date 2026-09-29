@@ -119,8 +119,10 @@ def test_silent_chokeout(content):
     assert not perception.aware_of(buddy, p)
     # and he wakes up later if you let go
     actions.release(sim, p)
-    sim.time += 70_000
-    sim.expire_statuses(g)
+    for s in range(1, 71):
+        sim.time += 1000
+        sim._tick_one(g, s)  # breathing again
+        sim.expire_statuses(g)
     assert g.conscious
 
 

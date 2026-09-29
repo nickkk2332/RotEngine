@@ -117,7 +117,7 @@ def compute_light(world: "World", ambient: float) -> list:
                 if d > r:
                     continue
                 p = (tx, ty, int(z))
-                if d < 1.5 or world.has_los(src, p):
+                if d < 1.5 or world.has_los(src, p, fog=False):  # (smoke is in the sight check, not the light map)
                     light[z, ty, tx] = max(light[z, ty, tx], 1.0 - 0.75 * d / r)
     return light.tolist()
 

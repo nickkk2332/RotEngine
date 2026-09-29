@@ -152,7 +152,8 @@ def _flee_danger(sim: "Sim", c: "Creature") -> int | None:
         score = min((sim.distance_pos(nxt, t) for t in threats), default=0) - 5 * sim.fields.burning(nxt)
         if best_score is None or score > best_score:
             best, best_score = nxt, score
-    if best is None:
+    here = min((sim.distance_pos(c.pos, t) for t in threats), default=0) - 5 * sim.fields.burning(c.pos)
+    if best is None or (best_score <= here and not burning):  # nowhere better to be: get down
         return actions.go_prone(sim, c) if threats and not c.has_status("prone") else None
     return actions.step(sim, c, best)
 
@@ -227,7 +228,7 @@ def _held_turn(sim: "Sim", c: "Creature") -> int:
         return grapple.fight_grip(sim, c)  # hands to the arm on your throat (the untrained mostly thrash)
     if not neck or air > 30:
         w = c.wielded
-        if w is not None and w.data.get("two_handed"):
+        if w is not None and w.data.get("two_handed") and not grapple.weapon_pinned(c):
             sidearm = next((i for i in c.carried if i.attacks and not i.data.get("two_handed")), None)
             if sidearm is not None and sim.rng.random() < 0.5:
                 return actions.wield(sim, c, sidearm)  # can't swing a rifle round: go for the knife
@@ -243,7 +244,7 @@ def _grapple_turn(sim: "Sim", c: "Creature") -> int:
     of: the arm comes off (and becomes a club), the head comes off."""
     t = c.grappling
     style = c.template.get("grapple")
-    if not style or t.dead or not t.conscious or t.team == c.team:
+    if not style or not t.active or t.team == c.team:
         return grapple.release(sim, c) or IDLE_MS
     options = grapple.moves(c)
     for move in ("wrench", "squeeze", "wrest"):

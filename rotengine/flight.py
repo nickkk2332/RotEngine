@@ -114,7 +114,7 @@ def _body_step(sim: "Sim", f: Flight) -> bool:
     """Move the body one tile. Returns False when the flight is over."""
     from .combat import deal_damage
     target, world = f.obj, sim.world
-    if f.tiles <= 0:
+    if f.tiles <= 0 or target.grappled_by is not None:  # caught (or grabbed) in mid-air
         return False
     x, y, z = target.pos
     nxt = (x + f.dx, y + f.dy, z)
@@ -214,11 +214,8 @@ def _item_step(sim: "Sim", f: Flight) -> bool:
 def _item_land(sim: "Sim", f: Flight) -> None:
     from .combat import attack_dice, deal_damage
     from .physics import explode
-    item, world, c = f.obj, sim.world, f.thrower
-    x, y, z = f.pos
-    while z > 0 and not world.supported((x, y, z)):  # come to rest on a floor
-        z -= 1
-    land = (x, y, z)
+    item, c = f.obj, f.thrower
+    land = sim.resting_place(f.pos)  # come to rest on a floor
     hit = sim.creature_at(land)
     if hit is not None and hit is not c and "thrown" in item.data:
         with sim.focus(land):

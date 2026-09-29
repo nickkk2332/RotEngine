@@ -453,7 +453,7 @@ def test_facing_arrows_show_where_enemies_look():
     app = new_app()
     content = app.content_for(scenario)
     sim = arena.build(scenario, content, seed=1)
-    app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 1)
+    app.screen = GameScreen(app, scenario, content, sim, sim.creatures[0], 1)
     row = [line for line in screen_text(app).splitlines() if "@" in line and "→" in line]
     assert row and row[0].index("→") == row[0].index("g") + 1  # the sentry (g) looks east, away from you
 

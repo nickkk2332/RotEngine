@@ -83,6 +83,8 @@ def run(effects: list[dict], ctx: Ctx) -> None:
         if "if" in op:
             branch = op.get("then", []) if test(op["if"], ctx) else op.get("else", [])
             run(branch, ctx)
+            if ctx.vars.get("_abort"):
+                return
             continue
         (name, args), = op.items()
         EFFECTS[name](args, ctx)
@@ -293,7 +295,7 @@ def _v_dist(_args, ctx):
 
 @value("count_enemies")
 def _v_count(args, ctx):
-    return len(ctx.sim.enemies_within(ctx.self, args.get("radius", 1)))
+    return len(ctx.sim.enemies_within(ctx.self, int(evaluate(args.get("radius", 1), ctx))))
 
 
 for _name, _fn in (("add", sum), ("min", min), ("max", max)):
@@ -393,7 +395,13 @@ def _c_not(arg, ctx):
 # -- effects -------------------------------------------------------------------
 @effect("message")
 def _e_message(text, ctx):
-    ctx.sim.log(text.format(self=ctx.self.name, target=ctx.target.name if ctx.target else "?"))
+    class _Vars(dict):
+        def __missing__(self, key):
+            return "{" + key + "}"
+    names = _Vars({k: (round(v, 1) if isinstance(v, float) else v) for k, v in ctx.vars.items()
+                   if not k.startswith("_")})
+    names.update(self=ctx.self.name, target=ctx.target.name if ctx.target else "?")
+    ctx.sim.log(text.format_map(names))
 
 
 @effect("set_var")
@@ -581,8 +589,8 @@ def _e_attack(args, ctx):
     if ctx.target is None or not ctx.target.active:
         return
     plan = best_attack_plan(ctx.sim, ctx.self, ctx.target, surprise=args.get("surprise", False),
-                            skill_bonus=args.get("skill_bonus", 0),
-                            damage_bonus=args.get("damage_bonus", 0), allow_aim=False)
+                            skill_bonus=int(evaluate(args.get("skill_bonus", 0), ctx)),
+                            damage_bonus=int(evaluate(args.get("damage_bonus", 0), ctx)), allow_aim=False)
     if plan:
         resolve_attack(ctx.sim, ctx.self, ctx.target, plan, surprise=args.get("surprise", False))
 

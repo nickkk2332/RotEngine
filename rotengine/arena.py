@@ -145,7 +145,8 @@ def run_once(scenario: dict, content: Content, seed: int | None = None,
     if echo:
         for c in sim.creatures:
             state = (f"dead: {c.death_cause}" if c.dead else "unconscious" if not c.conscious
-                     else "standing")
+                     else "gave up" if c.has_status("yielded")
+                     else "collapsed" if c.has_status("collapsed") else "standing")
             echo(f"  {c.name:<16} [{c.team}] {state:<22} {c.body.summary()}")
     dead = Counter(c.team for c in sim.creatures if c.dead)
     down = Counter(c.team for c in sim.creatures if not c.dead and not c.conscious)

@@ -191,10 +191,18 @@ def _check_refs(content: Content, type_: str, obj: dict) -> Iterable[str]:
             yield from need("power", p)
         eq = obj.get("equipment", {})
         yield from need("item", eq.get("wield"))
-        for w in eq.get("wear", []):
+        for w in eq.get("wear", []) + eq.get("carry", []):
             yield from need("item", w)
     for atk in obj.get("attacks", []) + obj.get("natural_attacks", []):
-        yield from need("damage_type", atk.get("damage", {}).get("type"))
+        missing = [k for k in ("name", "kind", "skill", "damage") if k not in atk]
+        dmg = atk.get("damage", {})
+        if "damage" in atk and "type" not in dmg:
+            missing.append("damage.type")
+        if "damage" in atk and "dice" not in dmg and "st" not in dmg:
+            missing.append("damage.dice or damage.st")
+        if missing:
+            yield f"attack {atk.get('name', '?')!r} is missing {', '.join(missing)}"
+        yield from need("damage_type", dmg.get("type"))
 
 
 def _validate_tile(content: Content, char: str, t: Any) -> Iterable[str]:
@@ -274,6 +282,18 @@ def _validate_dungeon_content(content: Content, type_: str, obj: dict, effects) 
                     yield from (f"{where}.{e}" for e in _validate_tile(content, key, f[key]))
             if "exit_floor" in f and not content.has("material", f["exit_floor"]):
                 yield f"{where}: unknown exit_floor material '{f['exit_floor']}'"
+            if f.get("final") and not f.get("boss"):
+                yield f"{where}: a final floor needs a boss (or the run can't be won)"
+        spans = sorted(tuple(f["depth"]) for f in obj["floors"]
+                       if isinstance(f.get("depth"), list) and len(f["depth"]) == 2)
+        want = 1
+        for lo, hi in spans:
+            if lo > want:
+                yield f"no floor covers depth {want}" + (f"-{lo - 1}" if lo - 1 > want else "")
+            want = max(want, hi + 1)
+        for ch in obj.get("characters", []):
+            if not content.has("creature", ch):
+                yield f"characters: unknown creature '{ch}'"
     elif type_ == "item" and "use" in obj:
         use = obj["use"]
         if not isinstance(use, dict) or "effects" not in use:

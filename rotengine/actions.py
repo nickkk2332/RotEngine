@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from . import combat, effects, perception, physics, training
+from . import combat, effects, grapple, perception, physics, training
 from .dice import check
 from .grapple import (  # noqa: F401  (grappling verbs live in grapple.py)
     check_grapple, choke, disarm, grab, hurl, release, squeeze, strangle, struggle, takedown, wrench, wrest)
@@ -242,7 +242,7 @@ def drop_item(sim: "Sim", c: "Creature", item) -> int | None:
 
 def wield(sim: "Sim", c: "Creature", item) -> int | None:
     """Take a carried weapon in hand (what you held goes in the pack)."""
-    if item not in c.carried or not item.attacks or not c.can_grip(item):
+    if item not in c.carried or not item.attacks or not c.can_grip(item) or grapple.weapon_pinned(c):
         return None
     c.carried.remove(item)
     if c.wielded is not None:
@@ -282,6 +282,8 @@ def take_off(sim: "Sim", c: "Creature", item) -> int | None:
 
 # -- doors and terrain ------------------------------------------------------------
 def open_door(sim: "Sim", c: "Creature", pos: "Pos") -> int | None:
+    if not sim.world.in_bounds(pos):
+        return None
     mat = sim.world.fill_mat(pos)
     if not mat.get("door") or not mat.get("solid") or not sim.in_melee_reach(c.pos, pos):
         return None
@@ -296,9 +298,11 @@ def open_door(sim: "Sim", c: "Creature", pos: "Pos") -> int | None:
 
 
 def close_door(sim: "Sim", c: "Creature", pos: "Pos") -> int | None:
+    if not sim.world.in_bounds(pos):
+        return None
     mat = sim.world.fill_mat(pos)
     if (not mat.get("door") or mat.get("solid") or not sim.in_melee_reach(c.pos, pos)
-            or sim.creature_at(pos, include_down=True) is not None or any(p == pos for p, _ in sim.items)):
+            or any(o.pos == pos for o in sim.creatures) or any(p == pos for p, _ in sim.items)):
         return None
     sim.world.swap_fill(pos, mat["door"])
     with sim.focus(c.pos, pos):
@@ -310,6 +314,8 @@ def close_door(sim: "Sim", c: "Creature", pos: "Pos") -> int | None:
 def smash(sim: "Sim", c: "Creature", pos: "Pos") -> int | None:
     """Hit a wall, door or window next to you with your best melee attack.
     Force concentrated on a structure counts double (like a body slammed into it)."""
+    if not sim.world.in_bounds(pos):
+        return None
     mat = sim.world.fill_mat(pos)
     if not mat.get("solid") or not sim.in_melee_reach(c.pos, pos) or pos[2] != c.pos[2]:
         return None
@@ -365,7 +371,8 @@ def throw(sim: "Sim", c: "Creature", item, target: "Pos") -> int | None:
 
 def plant(sim: "Sim", c: "Creature", item, pos: "Pos") -> int | None:
     """Fix a charge to a wall or door next to you; it blows a few seconds later."""
-    if item not in c.carried or not item.data.get("plantable") or not sim.in_melee_reach(c.pos, pos):
+    if (item not in c.carried or not item.data.get("plantable") or not sim.world.in_bounds(pos)
+            or not sim.in_melee_reach(c.pos, pos)):
         return None
     if not sim.world.fill_mat(pos).get("solid"):
         return None
@@ -385,7 +392,7 @@ def toggle_sneak(sim: "Sim", c: "Creature") -> int:
 def swap_weapon(sim: "Sim", c: "Creature") -> int | None:
     """Put away what's in hand and draw the next carried weapon."""
     options = [i for i in c.carried if i.attacks and c.can_grip(i)]
-    if not options:
+    if not options or grapple.weapon_pinned(c):
         return None
     nxt = options[0]
     c.carried.remove(nxt)

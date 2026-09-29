@@ -167,8 +167,8 @@ class Fields:
             total = np.zeros_like(g)
             count = np.zeros_like(g)
             for axis, shift in ((1, 1), (1, -1), (2, 1), (2, -1)):
-                total += np.roll(g, shift, axis=axis)
-                count += np.roll(open_, shift, axis=axis)
+                total += _shift(g, shift, axis)
+                count += _shift(open_, shift, axis)
             avg = np.where(count > 0, total / np.maximum(count, 1), 0)
             g += k * (avg - g) * open_
             if spec.get("rises") and g.shape[0] > 1:
@@ -293,10 +293,20 @@ def explode(sim: "Sim", pos: "Pos", spec: dict, source: "Creature | None" = None
     perception.emit_noise(sim, source, pos, spec.get("noise", "explosion"))
 
 
+def _shift(a, shift: int, axis: int):
+    """np.roll without wrapping round the map edge: what comes in is empty."""
+    out = np.roll(a, shift, axis=axis)
+    edge = [slice(None)] * a.ndim
+    edge[axis] = 0 if shift > 0 else -1
+    out[tuple(edge)] = 0
+    return out
+
+
 def arm(sim: "Sim", item: "Item", fuse_ms: int, source: "Creature | None") -> None:
     """Start an explosive's fuse. It goes off wherever the item is by then:
     on the floor, in someone's hand, or in their pocket."""
     item.armed = True
+    item.fuse_at = sim.time + fuse_ms  # (so it can follow its carrier to another level)
     # a partial of a module-level function (not a closure), so a saved game can pickle it
     sim.schedule_event(sim.time + fuse_ms, functools.partial(_detonate, sim, item, source))
 
@@ -347,7 +357,6 @@ def fling_distance(thrower: "Creature", body: "Creature") -> int:
 def throw_item(sim: "Sim", c: "Creature", item: "Item", target: "Pos") -> "Pos":
     """Throw an item at a tile. Returns where it's headed (it may not get
     there: walls and floors stop it on the way)."""
-    world = sim.world
     dist = sim.distance_pos(c.pos, target)
     combat.face(c, target)
     skill = c.skill("throwing") - c.action_penalty("ranged") + combat.range_penalty(dist)
@@ -373,6 +382,9 @@ def fling(sim: "Sim", c: "Creature", body: "Creature", direction: tuple[int, int
 
 
 def hurl(sim: "Sim", c: "Creature", body: "Creature", direction: tuple[int, int]) -> None:
+    from .grapple import release
+    if body.grappled_by is not None:
+        release(sim, body.grappled_by)  # torn out of whoever had hold of them
     tiles = fling_distance(c, body)
     dx, dy = direction
     origin = (body.pos[0] - dx, body.pos[1] - dy, body.pos[2])

@@ -195,7 +195,7 @@ apart (−5×HP). Otherwise death comes from one of three things:
 * **Pain:** an ongoing penalty of 4 × (fraction of HP lost) + 1 per fracture, capped at
   −6. It's halved by high pain threshold and reduced by 0.5 per point of WIS over 10.
   It applies fully to attacks and half to defense.
-* **Agony:** a wound of half your HP or more, a fracture, or a lost part means a WIS
+* **Agony:** a wound of half your HP or more (a quarter once you're in the red), a fracture, or a lost part means a WIS
   roll; fail and you flinch, doubled over and helpless for 1.5 s (3 s if you fail badly).
 * **Knockdown:** a wound over 2/3 of your HP (a quarter, for a blunt blow to the head)
   means a CON roll (skull −10, face and vitals −5). Fail and you're stunned and down.
@@ -391,6 +391,9 @@ that grip allows.
   marks it; ST 20+ crushes the windpipe (`crushed_windpipe`: out cold, dead in under 2
   minutes); the Hulk crushes the neck.
 * **Grabbed by someone you never saw:** `startled` for a second before you can react.
+* **Your hands are busy:** holding someone, you can't use a two-handed weapon; held by
+  the weapon or the arm it's in, you can't draw or swap weapons. Die or pass out and
+  your grip goes; grab someone who's been flung and you stop them mid-air.
 * **Fighting back** (the AI does this; so can you): hand-fight the choke (trained
   fighters do this 70% of the time, the untrained panic and thrash), hit whoever's
   holding you (−2 if they're behind you; a rifle or other two-handed gun can't be
@@ -414,7 +417,7 @@ that grip allows.
 
 **The hold contest** (take down, disarm, wrest, wrench, squeeze): your max(ST, Wrestling)
 + 2 for the leverage (+3 more from behind) against their max(ST, Wrestling), minus the
-usual penalties and 1 per second they've been choked. Someone unconscious doesn't
+usual penalties (graying out for air included). Someone unconscious doesn't
 resist.
 
 **Wrenching, snapping and tearing.** `wrench` is a JSON damage type with three
@@ -594,8 +597,11 @@ and stealth (each time someone looks your way and you stay hidden). Only the pla
 
 **Saving.** The whole `Run` is pickled (content included, so a save plays the same
 even if the data files change) with a version number; a save from another version is
-refused with a message, not a crash. Grenade fuses are scheduled as a
-`functools.partial` of a module-level function so they pickle too.
+refused with a message, not a crash (so `SAVE_VERSION` goes up whenever what's pickled
+changes shape). Grenade fuses are scheduled as a `functools.partial` of a module-level
+function so they pickle too, and a fuse still burning in your pack comes downstairs
+with you. Starting a new run while one is saved asks first. Out cold for over an hour,
+alone down there, you don't come round: the run ends.
 
 **Inventory** (`i`): wield, wear (8 s) or take off armor, use, throw, drop. `a` goes
 straight to medicine. `g` takes a live grenade first, and otherwise asks what to pick

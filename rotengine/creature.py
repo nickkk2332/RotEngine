@@ -312,7 +312,8 @@ class Creature:
         from .grapple import WEAPON, restrained
         held = restrained(self)  # someone has hold of your gun arm: no shooting with it
         out: list[tuple[dict, Item | None]] = []
-        if self.wielded and WEAPON not in held and not any(
+        busy = self.grappling is not None and self.wielded is not None and self.wielded.data.get("two_handed")
+        if self.wielded and not busy and WEAPON not in held and not any(
                 p.id in held and (p.data.get("primary") or self.wielded.data.get("two_handed"))
                 for p in self.body.parts.values() if "grasp" in p.tags):
             out += [(a, self.wielded) for a in self.wielded.attacks]

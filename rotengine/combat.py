@@ -314,8 +314,10 @@ def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: A
         shots = _spend_ammo(attack, item)
         attacker.aim_target = None
         speed = attack.get("velocity", DEFAULT_VELOCITY)
+        unseen = not _noticed(sim, target, attacker)  # judged now: the bang comes with the bullet
         flight.launch_tracer(sim, attacker, target.pos, speed, functools.partial(
-            _rounds_arrive, sim, attacker, target, plan, surprise, target.pos, attacker.pos, shots, time_ms))
+            _rounds_arrive, sim, attacker, target, plan, surprise, target.pos, attacker.pos, shots, time_ms,
+            unseen))
         took = time_ms
     else:
         with sim.focus(attacker.pos, target.pos):
@@ -345,7 +347,8 @@ class _Spot:
         self.pos = pos
 
 
-def _rounds_arrive(sim, attacker, target, plan, surprise, aimed_at, fired_from, shots, time_ms) -> None:
+def _rounds_arrive(sim, attacker, target, plan, surprise, aimed_at, fired_from, shots, time_ms,
+                   unseen=False) -> None:
     """The rounds get where they were aimed. Settle the shot as if from where
     the shooter stood when they fired; if the target has moved off that
     tile (someone very fast), they fly on past as strays."""
@@ -353,22 +356,33 @@ def _rounds_arrive(sim, attacker, target, plan, surprise, aimed_at, fired_from, 
     attacker.pos = fired_from
     try:
         with sim.focus(fired_from, aimed_at):
-            if target.pos != aimed_at:
+            if target.dead:  # someone else got him first: the rounds fly on
+                _stray_rounds(sim, attacker, _Spot(aimed_at), plan.dice, shots)
+            elif target.pos != aimed_at:
                 verb = plan.attack.get("verb", plan.attack["name"])
+                sim.cue(aimed_at, "miss")
                 sim.log(f"{attacker.name} {verb} {target.name}, but {target.name} isn't there any more.")
                 _stray_rounds(sim, attacker, _Spot(aimed_at), plan.dice, shots)
             else:
-                _resolve(sim, attacker, target, plan, surprise, plan.attack, plan.item, True, time_ms, shots)
+                _resolve(sim, attacker, target, plan, surprise, plan.attack, plan.item, True, time_ms, shots,
+                         unseen)
     finally:
         attacker.pos = here
 
 
-def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_ms, shots=None) -> int:
+def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_ms, shots=None,
+             unseen=None) -> int:
     if shots is None:
         shots = _spend_ammo(attack, item)
+    if unseen is None:
+        unseen = not _noticed(sim, target, attacker)
     if ranged:
         attacker.aim_target = None
     where = f" (aiming for the {target.body.part(plan.location).name})" if plan.location else ""
+    if where and surprise:
+        where, surprise_tag = where[:-1] + "; unaware!)", ""
+    else:
+        surprise_tag = " (unaware!)"
     verb = attack.get("verb", attack["name"])
     roll = check(sim.rng, plan.skill)
     training.practice(sim, attacker, attack["skill"], plan.skill, roll.success)
@@ -387,9 +401,9 @@ def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_m
 
     hits = 1
     if ranged and shots > 1:
-        hits = min(shots, 1 + roll.margin // attack.get("recoil", 1))
+        hits = min(shots, 1 + max(0, roll.margin) // attack.get("recoil", 1))
     strays = shots - hits
-    defense = None if roll.critical else defense_against(sim, attacker, target, attack["kind"], surprise)
+    defense = None if roll.critical or unseen else defense_against(sim, attacker, target, attack["kind"], surprise)
     if defense is not None:
         name, value = defense
         spend_defense(sim, target)
@@ -405,9 +419,9 @@ def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_m
                     _stray_rounds(sim, attacker, target, plan.dice, strays)
                 return time_ms
     sim.cue(target.pos, "crit" if roll.critical else "hit")
-    tag = " (critical!)" if roll.critical else " (unaware!)" if surprise else ""
+    tag = " (critical!)" if roll.critical else surprise_tag if surprise else ""
     if not surprise and defense is None and not roll.critical and target.conscious:
-        tag = " (never saw it coming!)" if not _noticed(sim, target, attacker) else " (from behind!)"
+        tag = " (never saw it coming!)" if unseen else " (from behind!)"
     sim.log(f"{attacker.name} {verb} {target.name}{where}{tag}" + (f" - {hits} hits" if hits > 1 else "") + ".")
 
     cover_dr = 0
@@ -474,8 +488,8 @@ def _stray_rounds(sim: "Sim", shooter: "Creature", target: "Creature", dice: Dic
                 dmg -= fmat.get("dr", 0)
                 if dmg <= 0 or world.floor_mat(slab) is not None:
                     break
-            if p != target.pos:
-                other = sim.creature_at(p, include_down=True)
+            other = sim.creature_at(p, include_down=True)
+            if other is not target:
                 if other is not None and other is not shooter and check(sim.rng, BYSTANDER_HIT).success:
                     sim.log(f"  A stray round hits {other.name}!")
                     deal_damage(sim, other, dmg, "pierce", source=shooter, origin=shooter.pos)
@@ -527,7 +541,9 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
         if (target.conscious and inj.injury >= target.max_hp / 3 and not grapple.silenced(target)
                 and not target.has_trait("high_pain_threshold")):
             perception.emit_noise(sim, target, target.pos, "scream")
-        if not target.dead:
+        if target.dead:
+            target.body.bleed_rate = target.body.internal_bleed = 0.0  # a corpse doesn't bleed out
+        elif target.conscious:
             sim.fire_hooks(target, "on_damaged", source, {"damage": inj.injury})
         if source is not None and not source.dead and target.dead:
             sim.fire_hooks(source, "on_kill", target)
@@ -596,7 +612,7 @@ def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> Non
             if concussive and (r.margin <= -5 or r.fumble):
                 knock_out(sim, c, "from the blow to the head", sim.rng.randint(*CONCUSSION_MS))
                 return
-            sim.log(f"  {c.name} is knocked down and stunned.")
+            sim.log(f"  {c.name} is {'stunned' if c.has_status('prone') else 'knocked down and stunned'}.")
             c.add_status("prone", None)
             sim.apply_status(c, "stunned", 3000 if head else 2000)
 
@@ -645,7 +661,10 @@ def stays_conscious(sim: "Sim", c: "Creature") -> bool:
 def collapse(sim: "Sim", c: "Creature", why: str = "") -> None:
     """Down and can't get up, but still conscious (see the 'collapsed' status)."""
     if c.conscious and not c.has_status("collapsed"):
-        sim.log(f"  {c.name} collapses{' ' + why if why else ''}.")
+        if c.has_status("prone"):
+            sim.log(f"  {c.name} can't get up{' ' + why if why else ''}.")
+        else:
+            sim.log(f"  {c.name} collapses{' ' + why if why else ''}.")
         c.add_status("collapsed", None)
         c.add_status("prone", None)
 
@@ -664,12 +683,18 @@ def knock_out(sim: "Sim", c: "Creature", why: str = "", duration_ms: int | None 
         sim.log(f"  {c.name} falls unconscious{' ' + why if why else ''}.")
         c.add_status("unconscious", None if duration_ms is None else sim.time + duration_ms)
         c.add_status("prone", None)
+        grapple.release(sim, c)  # limp hands let go
+    elif not c.dead and duration_ms is None:
+        c.statuses["unconscious"] = None  # out already, now for a reason a timer won't fix
 
 
 def kill(sim: "Sim", c: "Creature", cause: str) -> None:
     if not c.dead:
         c.dead = True
         c.death_cause = cause
+        grapple.release(sim, c)
+        if c.grappled_by is not None and c.grappled_by.hold not in c.body.parts:
+            grapple.release(sim, c.grappled_by)  # a grip on a dead man's weapon is just the weapon
         c.statuses.clear()
         c.body.bleed_rate = c.body.internal_bleed = 0.0
         sim.log(f"  {c.name} dies ({cause}).")

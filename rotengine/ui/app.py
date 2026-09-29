@@ -127,6 +127,7 @@ def main(scenario: str | None = None, play_as: str | None = None, seed: int | No
                     app.running = False
                     break
                 key = keys.read(event)
+                animating = getattr(app.screen, "animating", False)  # (a key may have just started one)
                 if key and not animating:  # (keys pressed mid-flight are dropped)
                     app.handle_key(key)
             if animating:

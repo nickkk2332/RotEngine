@@ -17,7 +17,7 @@ from ..creature import Creature
 from .keys import DIRECTIONS, VI_KEYS
 from .menus import MainMenu, Screen
 from .theme import (BLACK, BLUE, CONE_FRONT_BG, CONE_SIDE_BG, CURSOR_BG, CYAN, SPOTTED_BG, SUSPICIOUS_BG, DARK, DARK_RED, DIM, GREEN, GREY, LOG_H, LOG_Y,
-                    MAP_H, MAP_W, MAP_X, MAP_Y, ORANGE, PANEL_BG, RED, SELECT_BG, SIDE_W, SIDE_X,
+                    MAP_H, MAP_W, MAP_X, MAP_Y, ORANGE, PANEL_BG, RED, SCREEN_H, SELECT_BG, SIDE_W, SIDE_X,
                     TARGET_BG, TITLE, WHITE, YELLOW, dim, material_fg)
 from .widgets import bar, box, print_wrapped, wrap
 
@@ -133,7 +133,7 @@ class GameScreen(Screen):
         self._grab_who: Creature | None = None
         self.animating = False  # something's in the air and the App is playing it out
         self.flashes: list[tuple] = []  # (pos, kind, real time it fades) from sim.fx
-        self._fx_i = 0
+        self._fx_i = sim.fx_seq  # only what happens from now on
         self.journal: list[tuple[str, tuple]] = []  # what you witnessed, as it happened
         self._log_i = 0                              # how far into sim.lines the journal has read
         self.log_scroll = 0
@@ -164,6 +164,8 @@ class GameScreen(Screen):
                 if self.status != "timeout" or self.player.dead:
                     break
                 self.status = self.sim.advance()
+            if self.status == "timeout" and not self.player.dead:
+                combat.kill(self.sim, self.player, "never came round")  # an hour out cold, alone, down here
             if self.run.state != "playing":
                 self._update_fov()
                 self.mode = "over"
@@ -216,6 +218,9 @@ class GameScreen(Screen):
         if cost is None:
             self.notice = fail
             return
+        if self.sim.awaiting is not self.player:  # (not your turn: something's still playing out)
+            self.notice = ""
+            return
         self.notice = ""
         self.sim.player_act(cost)
         self._advance()
@@ -245,13 +250,12 @@ class GameScreen(Screen):
         short flashes on the tiles they happened on, if you could see them."""
         import time
         now = time.monotonic()
-        fx = self.sim.fx
-        if self._fx_i > len(fx):
-            self._fx_i = 0
-        for pos, kind in fx[self._fx_i:]:
+        fx, seq = self.sim.fx, self.sim.fx_seq
+        new = min(len(fx), max(0, seq - self._fx_i))
+        for pos, kind in fx[len(fx) - new:]:
             if pos in self.visible:
                 self.flashes.append((pos, kind, now + self.FLASH_S))
-        self._fx_i = len(fx)
+        self._fx_i = seq
         self.flashes = [f for f in self.flashes if f[2] > now]
 
     def needs_frames(self) -> bool:
@@ -274,6 +278,8 @@ class GameScreen(Screen):
 
     # -- input -------------------------------------------------------------
     def on_key(self, key: str):
+        if self.animating:
+            return None  # the world's mid-flight: wait for it
         handler = getattr(self, f"_key_{self.mode}")
         return handler(key)
 
@@ -396,7 +402,9 @@ class GameScreen(Screen):
             if len(near) > 1 and not any(i.armed for i in near):
                 self.mode = "pickup"
                 return None
-            return self._do(actions.pick_up(sim, p), "Nothing here to pick up.")
+            no_hand = not p.body.functional_with("grasp")
+            return self._do(actions.pick_up(sim, p),
+                            "You have no working hand." if no_hand and near else "Nothing here to pick up.")
         if key == "p":
             if not p.powers:
                 self.notice = "You have no powers."
@@ -652,7 +660,7 @@ class GameScreen(Screen):
         box(con, 1, 4, w, 7 + len(options), f"Holding {t.name} by the {grip} ({state})")
         for i, (label, note, _) in enumerate(options):
             con.print(3, 6 + i, f"{chr(ord('a') + i)}  {label:<24}{note}"[:w - 4], fg=WHITE)
-        con.print(3, 7 + len(options), "move: drag them · L let go · Esc back"[:w - 4], fg=GREY)
+        con.print(3, 7 + len(options), "arrows: drag them · L let go · Esc back"[:w - 4], fg=GREY)
         con.print(3, 8 + len(options), f"your ST {p.stat('ST')} / Wrestling {p.skill('wrestling')} vs their ST "
                   f"{t.stat('ST')} / Wrestling {t.skill('wrestling')}"[:w - 4], fg=DARK)
 
@@ -683,7 +691,8 @@ class GameScreen(Screen):
             self.mode, self.cursor = "play", None
             rng = physics.throw_range(p, item.data.get("weight", 1))
             return self._do(actions.throw(self.sim, p, item, target),
-                            f"Too far: you can throw that {rng} tiles." if self.sim.distance_pos(p.pos, target) > rng
+                            "You have no working hand." if not p.body.functional_with("grasp")
+                            else f"Too far: you can throw that {rng} tiles." if self.sim.distance_pos(p.pos, target) > rng
                             else "You can't throw that there.")
         return None
 
@@ -852,6 +861,7 @@ class GameScreen(Screen):
             return None
         self.sim = run.sim
         self._log_i = 0
+        self._fx_i, self.flashes = self.sim.fx_seq, []
         self.journal.append((f"--- floor {run.depth}: {run.plan.name} ---", TITLE))
         self.seen, self.visible, self.cursor = {}, set(), None
         self.mode = "play"
@@ -875,6 +885,9 @@ class GameScreen(Screen):
         """Rest (and heal) in 10-second steps until you're as good as you'll
         get, something happens, or an hour passes."""
         p, sim = self.player, self.sim
+        if self.run is None:
+            self.notice = "Resting is for runs (nobody heals in an arena fight)."
+            return None
         if self._visible_enemies():
             self.notice = "Not with enemies in sight."
             return None
@@ -920,11 +933,11 @@ class GameScreen(Screen):
 
     def _key_inventory(self, key: str):
         inv = self._inventory()
-        if key in ("esc", "i"):
-            self.mode = "play"
-        elif len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(inv):
-            self._inv_item = inv[ord(key) - ord("a")][1]
+        if len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(inv):  # (letters first:
+            self._inv_item = inv[ord(key) - ord("a")][1]                           # "i" may be an item)
             self.mode = "itemmenu"
+        elif key in ("esc", "i"):
+            self.mode = "play"
         return None
 
     def _item_actions(self, item) -> list[tuple[str, object]]:
@@ -961,23 +974,23 @@ class GameScreen(Screen):
 
     def _key_usemenu(self, key: str):
         items = actions.usable(self.player)
-        if key in ("esc", "a"):
-            self.mode = "play"
-        elif len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(items):
+        if len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(items):
             item = items[ord(key) - ord("a")]
             self.mode = "play"
             why = actions.cannot_use(self.sim, self.player, item)
             return self._do(actions.use_item(self.sim, self.player, item), f"No point: {why}.")
+        if key == "esc":
+            self.mode = "play"
         return None
 
     def _key_pickup(self, key: str):
         near = actions.items_near(self.sim, self.player)
-        if key in ("esc", "g"):
-            self.mode = "play"
-        elif len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(near):
+        if len(key) == 1 and "a" <= key <= "z" and ord(key) - ord("a") < len(near):
             self.mode = "play"
             return self._do(actions.pick_up(self.sim, self.player, which=near[ord(key) - ord("a")]),
                             "You can't pick that up.")
+        if key in ("esc", "g"):
+            self.mode = "play"
         return None
 
     LOG_PAGE = 36
@@ -1070,10 +1083,14 @@ class GameScreen(Screen):
             right = f"{m // 60}:{m % 60:02d}:{sec:02d} "
         else:
             right = f"t={s.time / 1000:.2f}s  level {self.view_z}{' (viewing)' if self.view_z != self.player.pos[2] else ''} "
-        con.print(0, 0, f" {title} ", fg=TITLE)
         con.print(con.width - len(right), 0, right, fg=GREY)
+        room = con.width - len(title) - len(right) - 4
+        if self.notice and len(self.notice) > room:  # a long notice gets the whole bar (the title can wait)
+            con.print(1, 0, self.notice[:con.width - len(right) - 2], fg=YELLOW)
+            return
+        con.print(0, 0, f" {title} ", fg=TITLE)
         if self.notice:
-            con.print(len(title) + 3, 0, self.notice[:con.width - len(title) - len(right) - 4], fg=YELLOW)
+            con.print(len(title) + 3, 0, self.notice[:room], fg=YELLOW)
 
     def _lit(self, pos, fg):
         """Shade a visible tile by how lit it is (night-vision goggles show
@@ -1337,6 +1354,9 @@ class GameScreen(Screen):
             for line, fg in wounds[:6]:
                 con.print(x + 1, y, line[:w - 1], fg=fg)
                 y += 1
+            if len(wounds) > 6:
+                con.print(x + 1, y, f"+{len(wounds) - 6} more (@: character sheet)"[:w - 1], fg=DARK)
+                y += 1
             y += 1
         if self.mode == "look" and self.cursor is not None:
             self._render_look_info(con, x, y, w)
@@ -1483,8 +1503,14 @@ class GameScreen(Screen):
             b = c.body
             con.print(x + 1, y, f"HP {round(c.hp)}/{c.max_hp} · blood {b.blood:.0f}%"[:w - 1], fg=GREY)
             y += 1
-            for line, lfg in list(self._wound_lines(c))[:10]:
+            wounds = list(self._wound_lines(c))
+            room = max(1, SCREEN_H - 2 - y)  # (the hint line is below)
+            shown = wounds if len(wounds) <= room else wounds[:room - 1]
+            for line, lfg in shown:
                 con.print(x + 1, y, line[:w - 1], fg=lfg)
+                y += 1
+            if len(shown) < len(wounds):
+                con.print(x + 1, y, f"+{len(wounds) - len(shown)} more"[:w - 1], fg=DARK)
                 y += 1
 
     def _render_log(self, con) -> None:
@@ -1527,7 +1553,7 @@ class GameScreen(Screen):
             "usemenu": "letter: use it · Esc: close",
             "pickup": "letter: take it · Esc: close",
             "messages": "↑↓ scroll · PgUp/PgDn page · Home/End · Esc close",
-            "grapple": "letter: do it · move: drag · T: hurl · L: let go · Esc: back",
+            "grapple": "letter: do it · arrows: drag · T: hurl · L: let go · Esc: back",
             "grab": "letter: grab there · Tab: someone else · Esc: back",
         }
         con.print(0, con.height - 1, hints.get(self.mode, "")[:con.width], fg=DARK)
@@ -1681,24 +1707,27 @@ class GameScreen(Screen):
     def _render_run_over(self, con) -> None:
         run = self.run
         won = run.state == "won"
-        box(con, 6, 6, 58, 16 + len(run.history), "It's over" if won else "Dead")
-        y = 8
-        y += print_wrapped(con, 8, y, 54, run.epitaph(), fg=GREEN if won else RED, max_lines=3)
-        y += 1
-        for line in run.history + [f"Floor {run.depth} ({run.plan.name}): where it ended."]:
-            y += print_wrapped(con, 8, y, 54, line, fg=GREY, max_lines=2)
-        y += 1
         p = run.player
         skills = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in sorted(p.skills.items()))
+        story = run.history + [f"Floor {run.depth} ({run.plan.name}): where it ended."]
+        rows = (min(3, len(wrap(run.epitaph(), 54))) + sum(min(2, len(wrap(s, 54))) for s in story)
+                + min(3, len(wrap(f"Skills at the end: {skills}", 54))))
+        box(con, 6, 4, 58, min(SCREEN_H - 6, rows + 8), "It's over" if won else "Dead")
+        y = 6
+        y += print_wrapped(con, 8, y, 54, run.epitaph(), fg=GREEN if won else RED, max_lines=3)
+        y += 1
+        for line in story:
+            y += print_wrapped(con, 8, y, 54, line, fg=GREY, max_lines=2)
+        y += 1
         y += print_wrapped(con, 8, y, 54, f"Skills at the end: {skills}", fg=CYAN, max_lines=3)
         con.print(8, y + 1, "Enter: back to the menu", fg=DARK)
 
     def _render_help(self, con) -> None:
-        box(con, 4, 3, 60, len(HELP) + 6, "Keys")
+        box(con, 1, 2, 98, len(HELP) + 6, "Keys")
         for i, (k, what) in enumerate(HELP):
-            con.print(6, 5 + i, k, fg=YELLOW)
-            con.print(22, 5 + i, what[:40], fg=WHITE)
-        con.print(6, 6 + len(HELP), "any key to close", fg=DARK)
+            con.print(3, 4 + i, k, fg=YELLOW)
+            con.print(18, 4 + i, what[:79], fg=WHITE)
+        con.print(3, 5 + len(HELP), "any key to close", fg=DARK)
 
     def _render_confirm(self, con) -> None:
         box(con, 18, 14, 36, 5, "Quit")

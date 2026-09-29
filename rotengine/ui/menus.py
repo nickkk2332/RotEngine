@@ -82,6 +82,7 @@ class MainMenu(Screen):
     def __init__(self, app: "App"):
         super().__init__(app)
         self.error = ""
+        self.confirm_new = False
 
     def options(self) -> list[tuple[str, str]]:
         from .. import roguelike
@@ -102,11 +103,19 @@ class MainMenu(Screen):
         centered(con, 31, "In a fight, press ? for the keys.", fg=DARK)
 
     def on_key(self, key):
+        from .. import roguelike
+        if self.confirm_new:
+            self.confirm_new, self.error = False, ""
+            return run_menu(self.app) if key == "y" else None
         if key == "a":
             return scenario_menu(self.app)
         if key == "b":
             return CustomFight(self.app)
         if key == "c":
+            if roguelike.has_save(self.app.save_path):  # permadeath means one run at a time
+                self.confirm_new = True
+                self.error = "A new run ends the one you have saved. Start over? (y/n)"
+                return None
             return run_menu(self.app)
         if key == "d" and any(k == "d" for k, _ in self.options()):
             return continue_run(self)

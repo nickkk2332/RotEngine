@@ -74,9 +74,15 @@ class KeyReader:
     def __init__(self) -> None:
         self.text_ok = False
         self._pending: str | None = None
+        self._kp_period = False  # numpad '.' also types a '.': don't wait twice
 
     def read(self, event: ev.Event) -> str | None:
         if isinstance(event, ev.TextInput):
+            if self._kp_period and event.text == ".":
+                self._kp_period = False
+                self.text_ok = True
+                return None
+            self._kp_period = False
             if not self.text_ok:
                 self.text_ok = True
                 if self._pending == event.text:  # already handled from its KeyDown
@@ -84,6 +90,7 @@ class KeyReader:
                     return None
             return None if event.text.isdigit() else event.text
         if isinstance(event, ev.KeyDown):
+            self._kp_period = event.sym == _K.KP_PERIOD
             key = translate(event)
             if key is not None or self.text_ok:
                 return key
