@@ -193,7 +193,7 @@ class Creature:
         """Ongoing pain penalty from accumulated trauma and broken bones.
         WIS above 10 and pain-related traits blunt it."""
         lost = max(0.0, self.max_hp - self.hp)
-        p = 4 * lost / self.max_hp + self.body.fractures()
+        p = 4 * lost / self.max_hp + self.body.fractures() + 2 * self.body.limbs_lost()
         p *= self.trait_product("pain_mult")
         for d in self.status_defs():
             p *= d.get("pain_mult", 1.0)  # painkillers, adrenaline

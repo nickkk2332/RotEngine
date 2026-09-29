@@ -40,6 +40,19 @@ BLEED_SCALE = 0.6
 HEAL_PER_S = 0.0006     # fraction of max HP per second at CON 10
 BLOOD_PER_S = 0.02      # % of blood volume per second once bleeding has stopped
 FRACTURE_HEAL_S = 1800  # seconds for a splinted break to knit
+ORGAN_AT = 0.2          # deep injury (fraction of HP) that gets through to what's underneath
+ORGAN_BLEED_SCALE = 0.15  # organ "bleed" values are relative: a liver (1.0) hit deep bleeds ~0.2%/s
+
+
+def organ_hit(body: "Body", organ: dict, deep: float) -> float:
+    """An organ takes a wound: bleeding inside, heavier the deeper it went.
+    Returns the internal bleeding it started (%/s)."""
+    key = organ.get("name", organ["id"])
+    body.organs[key] = body.organs.get(key, 0.0) + deep
+    bleed = organ.get("bleed", 0.0) * (0.5 + deep / body.max_hp) * ORGAN_BLEED_SCALE
+    body.internal_bleed += bleed
+    body.bleed_rate += organ.get("external_bleed", 0.0)
+    return bleed
 
 
 @dataclass
@@ -55,6 +68,7 @@ class PartState:
     deep: float = 0.0       # injury that reached deep inside (see damage type "depth")
     splinted: bool = False  # a break that's been set: less pain, and it heals
     knit: float = 0.0       # seconds a splinted break has had to heal
+    dislocated: bool = False  # out of its socket: useless (and agony) until someone puts it back
 
     @property
     def name(self) -> str:
@@ -79,6 +93,9 @@ class Injury:
     internal: bool = False                          # started internal bleeding
     spec: dict = field(default_factory=dict)        # the part's data with by_type overrides applied
     severed: object = None                          # the item left behind by a severed part
+    reaches_organs: float = 0.0                     # deep injury that got to the organs (combat rolls which)
+    dislocatable: bool = False                      # hard enough to put the joint out (combat rolls it)
+    newly_dislocated: bool = False
 
     @property
     def penetrated(self) -> bool:
@@ -96,6 +113,11 @@ class Body:
         self.hypoxia: float = 0.0         # brain damage, 100 = brain death
         self.oxygen: float = 100.0        # % of the air in you (see Creature.apnea_rate)
         self.parts = {p["id"]: PartState(p["id"], p) for p in plan["parts"]}
+        self.organs: dict[str, float] = {}  # organ id -> how badly it's been hit
+
+    def __setstate__(self, state: dict) -> None:
+        state.setdefault("organs", {})  # saves from before organs
+        self.__dict__.update(state)
 
     # -- queries -----------------------------------------------------------
     def part(self, part_id: str) -> PartState:
@@ -109,7 +131,7 @@ class Body:
         a crippled arm means a useless hand."""
         p = self.parts[part_id]
         while p is not None:
-            if p.crippled or p.destroyed:
+            if p.crippled or p.destroyed or p.dislocated:
                 return False
             parent = p.data.get("parent")
             p = self.parts.get(parent) if parent else None
@@ -122,8 +144,15 @@ class Body:
         return sum(tag in p.tags for p in self.parts.values())
 
     def fractures(self) -> int:
-        """Breaks that hurt: a splinted one mostly doesn't."""
-        return sum(p.fractured and not p.splinted for p in self.parts.values())
+        """Breaks that hurt: a splinted one mostly doesn't. A dislocated joint
+        hurts as much as a break."""
+        return sum((p.fractured and not p.splinted) or p.dislocated for p in self.parts.values())
+
+    def limbs_lost(self) -> int:
+        """Arms, legs, hands and feet destroyed (not counting a hand that went
+        with its arm)."""
+        return sum(p.destroyed and p.note != "gone" and p.data.get("cripple_at") is not None
+                   for p in self.parts.values())
 
     @property
     def total_bleed(self) -> float:
@@ -203,6 +232,8 @@ class Body:
         deep_injury = injury * dtype.get("depth", 1.0)
         part.deep += deep_injury
         destroy_at = d.get("destroy_at")
+        if destroy_at is not None and not d.get("organ"):
+            destroy_at *= dtype.get("destroy_mult", 1.0)  # a limb is harder to pulp than to break
         if dtype.get("sudden") or (dtype.get("dismember_single") and not d.get("organ")):
             amount = injury  # it comes off in one blow, or not at all
         else:
@@ -214,12 +245,23 @@ class Body:
             part.note = d.get("destroy_text", "destroyed")
             result.lost = self._lose_children(part.id)
             self.bleed_rate += d.get("sever_bleed", 0.0)
+            part.dislocated = False
+
+        # A joint wrenched (or hit) hard, short of breaking: it may come out
+        # of its socket (combat rolls the damage type's "dislocates" chance).
+        dislocate_at = d.get("dislocate_at")
+        if (dislocate_at is not None and dtype.get("dislocates") and not part.destroyed
+                and not part.fractured and not part.dislocated and injury >= mh * dislocate_at):
+            result.dislocatable = True
 
         self.bleed_rate += injury / mh * dtype.get("bleed", 0.0) * d.get("bleed_mult", 1.0) * BLEED_SCALE
         internal = d.get("internal")
         if internal and deep_injury >= mh * internal.get("at", 0):
-            self.internal_bleed += deep_injury / mh * internal["bleed"] * BLEED_SCALE
+            self.internal_bleed += (deep_injury / mh * internal["bleed"] * BLEED_SCALE
+                                    * dtype.get("internal_mult", 1.0))
             result.internal = True
+        if d.get("organs") and deep_injury >= mh * dtype.get("organ_at", ORGAN_AT):
+            result.reaches_organs = deep_injury
         if d.get("brain"):
             self.hypoxia += deep_injury / mh * d.get("brain_damage", 40)
         return result
@@ -273,6 +315,8 @@ class Body:
         for p in self.parts.values():
             if p.destroyed:
                 hurt.append(f"{p.name}: {p.note.upper() or 'DESTROYED'}")
+            elif p.dislocated:
+                hurt.append(f"{p.name}: dislocated")
             elif p.crippled:
                 hurt.append(f"{p.name}: {'fractured' if p.fractured else 'crippled'}")
             elif p.fractured:
@@ -289,4 +333,5 @@ class Body:
             extra += f", air {self.oxygen:.0f}%"
         if self.hypoxia >= 1:
             extra += f", brain damage {min(100, self.hypoxia):.0f}"
+        hurt += [f"{o}: hit" for o in self.organs]
         return f"HP {round(self.hp)}/{self.max_hp}{extra}" + (f" [{'; '.join(hurt)}]" if hurt else "")

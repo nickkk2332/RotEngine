@@ -26,6 +26,7 @@ from .dice import Dice, check
 from .world import DIRS8, Pos, World
 
 TICK_MS = 1000
+REACT_MS = 400      # someone steps into your reach: this long before you answer it
 CARDIAC_ARREST_HYPOXIA = 0.5   # brain damage per second with no circulation (~3.5 min to death)
 ARREST_OXYGEN_DRAIN = 10.0     # % oxygen per second with no heartbeat: ~9 s of consciousness
 BREATH_RECOVERY = 25.0         # % oxygen per second back once you can breathe again
@@ -250,10 +251,26 @@ class Sim:
 
     # -- movement and falling ------------------------------------------------
     def move_creature(self, c: Creature, pos: Pos) -> None:
+        old = c.pos
         combat.face(c, pos)
         c.pos = pos
         c.aim_target = None
         self.check_fall(c)
+        # stepping into someone's reach: it takes them a moment to answer it
+        for e in self.creatures:
+            if (e is not c and e.team != c.team and e.active and self.in_melee_reach(e.pos, c.pos)
+                    and not self.in_melee_reach(e.pos, old)):
+                self.give_pause(e, REACT_MS)
+
+    def give_pause(self, c: Creature, ms: float) -> None:
+        """Someone just got in your face, or hit you out of nowhere: a moment
+        (on your own clock) before you can do anything about it. Only the AI
+        needs this: the player has their own reaction time."""
+        if c.controller == "player" or c.dead:
+            return
+        at = int(self.time + ms * c.trait_product("reaction_mult") / c.tempo)
+        if c.next_time < at:
+            self._schedule(c, at)
 
     def resting_place(self, pos: Pos) -> Pos:
         """Where something dropped at pos comes to rest: down through open air
@@ -528,7 +545,9 @@ class Sim:
         elif not_breathing:
             b.oxygen -= c.apnea_rate
         elif not choked:
-            b.oxygen = min(100.0, b.oxygen + BREATH_RECOVERY)
+            cap = min((d["air_cap"] for d in c.status_defs() if "air_cap" in d), default=100.0)
+            if b.oxygen < cap:  # (a punctured lung: you never quite get your breath back)
+                b.oxygen = min(cap, b.oxygen + BREATH_RECOVERY)
         b.oxygen = max(0.0, b.oxygen)
         if b.oxygen <= OXYGEN_BLACKOUT and c.conscious:
             combat.knock_out(self, c, "as the heart gives out" if arrest else "as the world goes dark")

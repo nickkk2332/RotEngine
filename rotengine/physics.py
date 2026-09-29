@@ -390,7 +390,8 @@ def hurl(sim: "Sim", c: "Creature", body: "Creature", direction: tuple[int, int]
     origin = (body.pos[0] - dx, body.pos[1] - dy, body.pos[2])
     with sim.focus(c.pos, body.pos):
         sim.log(f"{c.name} hurls {body.name}!")
-        combat.knockback(sim, body, origin, tiles, on_land=functools.partial(_hurled_landing, sim, body, tiles))
+        combat.knockback(sim, body, origin, tiles, on_land=functools.partial(_hurled_landing, sim, body, tiles),
+                         thrower=c)
 
 
 def _hurled_landing(sim: "Sim", body: "Creature", tiles: int) -> None:

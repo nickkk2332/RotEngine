@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from .world import Pos
 
 REACTION_MS = 1000          # a defense occupies this much of the defender's own time
+SURPRISE_MS = 900           # attacked by someone you never saw: this long to gather yourself
 TEMPO_DEFENSE = 2           # defense bonus per doubling of defender tempo over attacker tempo
 STACKED_DEFENSE_PENALTY = 2  # per earlier defense still inside the window
 SIDE_PENALTY = 2
@@ -58,13 +59,18 @@ def st_damage(st: int, kind: str) -> Dice:
     return Dice(n, 6, math.floor(mean - 3.5 * n + 0.5))
 
 
+def striking_st(c: "Creature") -> float:
+    """The strength behind a blow: ST, times the momentum of a speedster
+    (tempo^momentum_exponent)."""
+    return c.stat("ST") * c.tempo ** c.trait_sum("momentum_exponent")
+
+
 def attack_dice(attacker: "Creature", attack: dict) -> Dice:
     dmg = attack["damage"]
     if "dice" in dmg:
         return Dice.parse(dmg["dice"])
     # Momentum: limbs moving N times faster hit harder (traits opt in).
-    st = attacker.stat("ST") * attacker.tempo ** attacker.trait_sum("momentum_exponent")
-    base = st_damage(round(st), dmg["st"])
+    base = st_damage(round(striking_st(attacker)), dmg["st"])
     return Dice(base.n, base.sides, base.add + dmg.get("add", 0))
 
 
@@ -332,6 +338,41 @@ def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: A
 DEFAULT_VELOCITY = 400.0   # tiles per second for a ranged attack without its own "velocity"
 
 
+PARRY_JARRED = 1.5      # a blow this many times your strength jars the arm that stops it
+PARRY_SMASHED = 3.0     # ... and this many times, a parry doesn't stop it at all
+
+
+def _weapon_arm(c: "Creature"):
+    hand = next((p for p in c.body.parts.values() if p.data.get("primary") and "grasp" in p.tags), None)
+    if hand is None:
+        return None
+    return c.body.parts.get(hand.data.get("parent"), hand)
+
+
+def _parry_holds(sim: "Sim", attacker: "Creature", target: "Creature", plan: AttackPlan) -> bool:
+    """Parrying something far stronger than you. Half again your strength and the
+    parry holds, but the force goes into your arms and may tear the weapon
+    from your hand; three times and it just smashes through your guard."""
+    ratio = striking_st(attacker) / max(1.0, target.stat("ST"))
+    if ratio < PARRY_JARRED:
+        return True
+    arm = _weapon_arm(target)
+    w = target.wielded
+    if w is not None and not check(sim.rng, target.stat("ST") + 2 - round(4 * (ratio - 1))).success:
+        sim.log(f"  The blow tears {w.the} out of {target.name}'s hand!")
+        target.wielded = None
+        sim.drop(target.pos, w)
+    if ratio >= PARRY_SMASHED:
+        sim.log(f"  {target.name} gets a guard up, but the blow smashes straight through it!")
+        return False
+    jar = round(plan.dice.roll(sim.rng) * (1 - 1 / ratio))
+    sim.log(f"  {target.name} parries, but the force of it jars their "
+            f"{arm.name if arm else 'arms'}.")
+    if jar > 0 and arm is not None:
+        deal_damage(sim, target, jar, "crush", arm.id, source=attacker, knockback_ok=False)
+    return True
+
+
 def _spend_ammo(attack: dict, item) -> int:
     shots = attack.get("rof", 1)
     if item is not None and item.ammo is not None:
@@ -387,6 +428,8 @@ def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_m
     roll = check(sim.rng, plan.skill)
     training.practice(sim, attacker, attack["skill"], plan.skill, roll.success)
 
+    if unseen and target.conscious:
+        sim.give_pause(target, SURPRISE_MS)  # hit or miss, it takes a moment to understand what happened
     if not roll.success:
         sim.cue(target.pos, "miss")
         sim.log(f"{attacker.name} {verb} {target.name}{where} and misses "
@@ -408,7 +451,8 @@ def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_m
         name, value = defense
         spend_defense(sim, target)
         d = check(sim.rng, value - plan.deceptive)
-        if d.success:
+        held = d.success and (name != "parries" or _parry_holds(sim, attacker, target, plan))
+        if held:
             blocked = min(hits, max(1, 1 + d.margin))
             hits -= blocked
             strays += blocked if ranged else 0
@@ -530,10 +574,15 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
             notes.append(p.get("fracture_text", "bone broken") + "!")
         elif inj.newly_crippled:
             notes.append("crippled!")
+        if inj.dislocatable and not inj.newly_fractured and sim.rng.random() < dtype.get("dislocates", 0):
+            inj.part.dislocated = inj.newly_dislocated = True
+            inj.part.note = p.get("dislocate_text", "dislocated")
+            notes.append(inj.part.note + "!")
         if inj.internal:
             notes.append("internal bleeding")
         sim.log(f"  {raw} {dtype_id}{armor} to the {inj.part.name} -> {inj.injury} injury. "
                 f"{target.name}: {round(target.hp)}/{target.max_hp} HP" + (f"; {', '.join(notes)}" if notes else ""))
+        _organ_wounds(sim, target, inj, dtype)
         shock = int(inj.injury / max(1.0, target.max_hp / 10) * target.trait_product("pain_mult"))
         target.shock = min(4, target.shock + shock)
         target.aim_target = None
@@ -548,10 +597,57 @@ def deal_damage(sim: "Sim", target: "Creature", raw: int, dtype_id: str, part_id
         if source is not None and not source.dead and target.dead:
             sim.fire_hooks(source, "on_kill", target)
     if knockback_ok and dtype.get("knockback") and origin is not None:
-        tiles = raw // max(1, target.stat("ST") - 2)
+        tiles = knockback_tiles(raw, target, source)
         if tiles >= 1:
             knockback(sim, target, origin, tiles)
     return inj
+
+
+ORGAN_VERBS = {"pierce": "The round tears through", "large_pierce": "It tears through",
+               "impale": "The point goes into", "cut": "The blade opens", "crush": "The blow crushes",
+               "burn": "It sears", "squeeze": "The crush ruptures", "wrench": "It tears"}
+RIB_PUNCTURE_AT = 0.25  # a blunt blow this big (x HP) on broken ribs can drive one inward
+
+
+def _organ_wounds(sim: "Sim", c: "Creature", inj: Injury, dtype: dict) -> None:
+    """What the wound did underneath: which organ it reached, and what that
+    means. Also broken ribs driven in by another heavy blow."""
+    body, mh = c.body, c.max_hp
+    organs = inj.spec.get("organs") or []
+    if inj.reaches_organs and organs:
+        organ = sim.rng.choices(organs, [o.get("weight", 1) for o in organs])[0]
+        if organ["id"] != "miss":
+            verb = ORGAN_VERBS.get(inj.damage_type, "It reaches")
+            _hit_organ(sim, c, organ, inj.reaches_organs, f"{verb} {c.name}'s {organ['name']}")
+    # Broken ribs and another heavy blow to the chest: a rib goes in.
+    ribs = next((p for p in body.parts.values() if p.data.get("fracture_punctures")), None)
+    if (ribs is not None and dtype.get("fractures") and ribs.fractured and inj.injury >= mh * RIB_PUNCTURE_AT
+            and inj.part.id in (ribs.id, *ribs.data["fracture_punctures"].get("under", []))):
+        spec = ribs.data["fracture_punctures"]
+        if sim.rng.random() < spec.get("chance", 0.3):
+            everything = {o["id"]: o for p in body.parts.values() for o in p.data.get("organs", [])}
+            pool = [everything[i] for i in spec["organs"] if i in everything]
+            if pool:
+                organ = sim.rng.choices(pool, [o.get("weight", 1) for o in pool])[0]
+                _hit_organ(sim, c, organ, mh * 0.3, f"A broken rib is driven into {c.name}'s {organ['name']}")
+
+
+def _hit_organ(sim: "Sim", c: "Creature", organ: dict, deep: float, how: str) -> None:
+    from .body import organ_hit
+    organ_hit(c.body, organ, deep)
+    effect = organ.get("effect", "")
+    status = organ.get("status")
+    if status and sim.rng.random() < organ.get("chance", 1.0):
+        c.add_status(status, None)
+        if sim.content.get("status", status).get("no_stand") and not c.has_status("prone"):
+            c.add_status("prone", None)
+        lungs = [k for k in c.body.organs if "lung" in k]
+        if status == "punctured_lung" and len(lungs) >= 2:
+            c.add_status("both_lungs", None)
+            effect = "both lungs are gone: drowning in the air"
+    elif status:
+        effect = organ.get("else", effect)
+    sim.log(f"  {how}" + (f": {effect}" if effect else "") + "!")
 
 
 def _sever(sim: "Sim", c: "Creature", inj: Injury):
@@ -586,7 +682,7 @@ def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> Non
     if c.hp <= -5 * mh:
         kill(sim, c, "torn apart")
         return
-    if inj.newly_crippled or inj.newly_destroyed:
+    if inj.newly_crippled or inj.newly_destroyed or inj.newly_dislocated:
         check_grip(sim, c)
         if not c.body.functional_with("stance") and c.body.total_with("stance") and not c.has_status("prone"):
             sim.log(f"  {c.name} collapses.")
@@ -612,8 +708,11 @@ def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> Non
             if concussive and (r.margin <= -5 or r.fumble):
                 knock_out(sim, c, "from the blow to the head", sim.rng.randint(*CONCUSSION_MS))
                 return
-            sim.log(f"  {c.name} is {'stunned' if c.has_status('prone') else 'knocked down and stunned'}.")
-            c.add_status("prone", None)
+            if r.margin >= -STAGGER_MARGIN or c.has_status("prone"):  # rocked, but still on your feet
+                sim.log(f"  {c.name} {'is stunned' if c.has_status('prone') else 'staggers, stunned'}.")
+            else:
+                sim.log(f"  {c.name} is knocked down and stunned.")
+                c.add_status("prone", None)
             sim.apply_status(c, "stunned", 3000 if head else 2000)
 
     # Being in the red isn't a knockout. It's pain: going into the red, or a
@@ -622,11 +721,14 @@ def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> Non
     # floor, badly. (You go out from blood loss, a blow to the head, lack of
     # air, or trauma past -4 x HP.)
     in_red = c.hp <= 0
-    if c.hp <= 0 < prev_hp or (in_red and inj.injury >= mh / 3):
-        r = check(sim.rng, c.stat("WIS") + int(c.trait_sum("pain_resist")) - int(-c.hp // mh))
+    maimed = inj.newly_destroyed and inj.part.data.get("cripple_at") is not None  # a limb gone
+    if c.hp <= 0 < prev_hp or (in_red and inj.injury >= mh / 3) or maimed:
+        r = check(sim.rng, c.stat("WIS") + int(c.trait_sum("pain_resist")) - int(-c.hp // mh)
+                  - (LIMB_LOSS_SHOCK if maimed else 0))
         if not r.success:
             collapse(sim, c, "from the pain")
-    if (inj.injury >= (mh / 4 if in_red else mh / 2) or inj.newly_fractured or inj.newly_destroyed) \
+    if (inj.injury >= (mh / 4 if in_red else mh / 2) or inj.newly_fractured or inj.newly_destroyed
+            or inj.newly_dislocated) \
             and not c.has_status("stunned") and not c.has_status("agony"):
         r = check(sim.rng, c.stat("WIS") + int(c.trait_sum("pain_resist")))
         if not r.success:
@@ -635,6 +737,8 @@ def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> Non
 
 
 SHOCK_OUT = 4        # at -4 x HP nobody stays conscious (-5 x HP is torn apart)
+LIMB_LOSS_SHOCK = 4  # losing an arm or a leg: the WIS roll to stay on your feet is this much harder
+STAGGER_MARGIN = 2   # a knockdown roll missed by this much or less: stunned where you stand
 CONCUSSION_MS = (15_000, 90_000)  # how long a knockout blow to the head keeps you under
 SHOCK_BASE = 4       # stays_conscious rolls CON + this, minus how bad it is
 
@@ -700,8 +804,22 @@ def kill(sim: "Sim", c: "Creature", cause: str) -> None:
         sim.log(f"  {c.name} dies ({cause}).")
 
 
+KNOCKBACK_EXPONENT = 0.75  # how much a strength gap multiplies the shove
+
+
+def knockback_tiles(raw: int, target: "Creature", source: "Creature | None") -> int:
+    """How far a blow sends someone: the damage rolled over their mass (ST),
+    multiplied by how much stronger the hitter is. Two average people barely
+    shove each other; the Hulk puts a soldier through the far wall."""
+    mass = max(1.0, target.stat("ST"))
+    push = raw / mass
+    if source is not None:
+        push *= max(1.0, striking_st(source) / mass) ** KNOCKBACK_EXPONENT
+    return int(push)
+
+
 def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int,
-              on_land=None) -> None:
+              on_land=None, thrower: "Creature | None" = None) -> None:
     """Momentum doesn't care about armor: knockback uses the damage rolled,
     not what got through (a riot shield still gets shoved). The body flies
     tile by tile through world time (see flight.py)."""
@@ -711,14 +829,14 @@ def knockback(sim: "Sim", target: "Creature", origin: "Pos", tiles: int,
     dy = _sign(target.pos[1] - origin[1])
     if dx == dy == 0:
         dx, dy = sim.rng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
-    sim.log(f"  {target.name} is hurled back {tiles} tile{'s' * (tiles > 1)}!")
-    flight.launch_body(sim, target, (dx, dy), tiles, on_land)
+    sim.log(f"  {target.name} is {'thrown' if thrower else 'hurled back'} {tiles} tile{'s' * (tiles > 1)}!")
+    flight.launch_body(sim, target, (dx, dy), tiles, on_land, thrower)
 
 
 FIZZLE_COOLDOWN_MS = 2000
 
 
-def use_power(sim: "Sim", c: "Creature", power: dict, target: "Creature | None") -> int:
+def use_power(sim: "Sim", c: "Creature", power: dict, target: "Creature | None", dest: "Pos | None" = None) -> int:
     """Pay, run the effects, start the cooldown. A power whose effects abort
     (no room to land, target out of range) fizzles and can't be retried for a
     couple of seconds, so the AI doesn't burn itself out retrying."""
@@ -727,6 +845,8 @@ def use_power(sim: "Sim", c: "Creature", power: dict, target: "Creature | None")
     if power.get("noise"):
         perception.emit_noise(sim, c, c.pos, power["noise"])
     ctx = effects.Ctx(sim, c, target)
+    if dest is not None:
+        ctx.vars["dest"] = dest  # the player aimed it at a tile
     effects.run(power["effects"], ctx)
     cooldown = power.get("cooldown_ms", 0)
     if ctx.vars.get("_abort"):

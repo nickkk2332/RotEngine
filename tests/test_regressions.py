@@ -236,3 +236,125 @@ def test_flashes_arent_replayed_when_the_list_is_trimmed(content):
     for _ in range(450):
         sim.cue((1, 1, 0), "hit")
     assert sim.fx_seq == 450 and len(sim.fx) <= 200
+
+
+# -- round 4: reactions, force, organs ---------------------------------------------
+def test_stepping_into_reach_gives_you_the_first_blow(content):
+    """An NPC needs a moment to answer someone stepping in: the player's
+    next action comes first."""
+    sim = yard(content, seed=1)
+    p = sim.spawn("street_tough", "p", (4, 4, 0))
+    e = sim.spawn("street_tough", "e", (7, 4, 0))
+    p.controller = "player"
+    perception.make_all_aware(sim)
+    e.facing = (-1, 0)
+    sim._schedule(e, sim.time + 5)  # ready to go
+    from rotengine import actions as acts
+    sim.awaiting = p
+    sim.player_act(acts.step(sim, p, (5, 4, 0)) or 1)
+    sim.advance()
+    sim.player_act(acts.step(sim, p, (6, 4, 0)) or 1)  # now in reach
+    assert sim.advance() == "player"
+    assert not any("e punches" in line or "e kicks" in line for line in sim.lines)
+
+
+def test_a_missed_ambush_leaves_the_victim_a_beat_behind(content):
+    sim = yard(content, seed=2)
+    a = sim.spawn("operative", "a", (5, 4, 0))
+    t = sim.spawn("sentry", "t", (6, 4, 0))
+    t.facing = (1, 0)  # back to him
+    sim._schedule(t, sim.time + 1)
+    plan = combat.best_attack_plan(sim, a, t, allow_aim=False)
+    combat.resolve_attack(sim, a, t, plan)
+    assert t.dead or not t.conscious or t.next_time >= sim.time + 500
+
+
+def test_the_hulk_sends_people_flying(content):
+    sim = yard(content)
+    hulk = sim.spawn("hulk", "h", (3, 4, 0))
+    s = sim.spawn("soldier", "s", (4, 4, 0))
+    human = sim.spawn("human", "a", (10, 4, 0))
+    assert combat.knockback_tiles(18, s, hulk) >= 4
+    assert combat.knockback_tiles(6, human, sim.spawn("human", "b", (12, 4, 0))) == 0
+
+
+def test_parrying_the_hulk_does_not_work(content):
+    sim = yard(content, seed=3)
+    hulk = sim.spawn("hulk", "h", (3, 4, 0))
+    g = sim.spawn("guard", "g", (4, 4, 0))
+    plan = combat.best_attack_plan(sim, hulk, g, allow_aim=False)
+    assert not combat._parry_holds(sim, hulk, g, plan)
+
+
+def test_throwing_someone_over_your_shoulder(content):
+    from rotengine import flight, physics
+    sim = yard(content, seed=1)
+    c = sim.spawn("hulk", "h", (10, 4, 0))
+    t = sim.spawn("human", "t", (11, 4, 0))
+    grapple._hold(c, t, "torso", rear=False)
+    physics.fling(sim, c, t, (-1, 0))  # behind you
+    flight.finish(sim)
+    assert t.pos[0] < 10 and not any("crashes into h" in line for line in sim.lines)
+
+
+def test_a_bullet_in_the_chest_says_what_it_hit(content):
+    hits = set()
+    for seed in range(40):
+        sim = yard(content, seed=seed)
+        c = sim.spawn("human", "a", (5, 4, 0))
+        combat.deal_damage(sim, c, 10, "pierce", "torso")
+        hits |= set(c.body.organs)
+    assert len(hits) >= 3 and hits <= {"left lung", "right lung", "liver", "spleen", "stomach", "spine"}
+
+
+def test_a_blunt_blow_breaks_a_limb_long_before_it_pulps_it(content):
+    sim = yard(content)
+    c = sim.spawn("human", "a", (5, 4, 0))
+    combat.deal_damage(sim, c, 12, "crush", "l_arm", knockback_ok=False)
+    arm = c.body.part("l_arm")
+    assert arm.fractured and not arm.destroyed
+    combat.deal_damage(sim, c, 25, "crush", "r_leg", knockback_ok=False)
+    leg = c.body.part("r_leg")
+    assert leg.destroyed and "pulp" in leg.note
+    assert c.body.bleed_rate >= 2.0 and c.pain() >= 4
+
+
+def test_dislocations_happen_and_can_be_put_back(content):
+    from rotengine import actions as acts
+    sim = yard(content, seed=4)
+    c = sim.spawn("operative", "a", (5, 4, 0))
+    for _ in range(20):
+        combat.deal_damage(sim, c, 6, "wrench", "r_arm", knockback_ok=False)
+        if c.body.part("r_arm").dislocated:
+            break
+        c.body.part("r_arm").damage = c.body.part("r_arm").counted = 0
+    arm = c.body.part("r_arm")
+    assert arm.dislocated and not c.body.is_functional("r_hand")
+    for _ in range(10):
+        if not arm.dislocated:
+            break
+        acts.reset_joint(sim, c, c)
+    assert not arm.dislocated
+
+
+def test_a_rib_can_be_driven_into_a_lung(content):
+    punctured = 0
+    for seed in range(60):
+        sim = yard(content, seed=seed)
+        c = sim.spawn("human", "a", (5, 4, 0))
+        c.body.part("torso").fractured = True
+        combat.deal_damage(sim, c, 6, "crush", "torso", knockback_ok=False)
+        punctured += any("rib is driven" in line for line in sim.lines)
+    assert 5 <= punctured <= 35
+
+
+def test_a_small_miss_on_a_knockdown_roll_just_staggers(content):
+    staggered = knocked = 0
+    for seed in range(80):
+        sim = yard(content, seed=seed)
+        c = sim.spawn("human", "a", (5, 4, 0))
+        combat.deal_damage(sim, c, 8, "crush", "torso", knockback_ok=False)
+        text = "\n".join(sim.lines)
+        staggered += "staggers" in text
+        knocked += "knocked down" in text
+    assert staggered and knocked

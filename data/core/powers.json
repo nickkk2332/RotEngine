@@ -14,32 +14,39 @@
      {"damage_terrain": {"radius": 2, "amount": "6d6", "z_offsets": [0, 1]}}
    ]},
   {"type": "power", "id": "blink", "name": "blink",
-   "description": "Short-range teleport to a target in sight, arriving behind them with a blade already moving: an all-out attack they never see coming.",
+   "description": "Teleport to any spot you can see within 14 tiles (up onto a ledge too). Land behind someone who hasn't seen you and your next blow comes out of nowhere.",
    "cost": {"stamina": 2}, "time_ms": 400, "noise": "sneak",
    "ai_condition": {"and": [{"has_target": true}, {"sees_target": true},
                             {"compare": [{"distance_to_target": {}}, "<=", 14]},
                             {"or": [{"compare": [{"distance_to_target": {}}, ">=", 3]},
                                     {"compare": [{"count_enemies": {"radius": 1}}, ">=", 2]}]}]},
+   "targeting": "tile", "range": 14,
    "effects": [
      {"teleport": {"range": 14}},
-     {"message": "{self} blinks behind {target}."},
-     {"attack": {"surprise": true, "skill_bonus": 4, "damage_bonus": 2}}
+     {"if": {"chose_spot": true},
+      "then": [{"message": "{self} blinks."}],
+      "else": [{"message": "{self} blinks behind {target}."},
+               {"attack": {"surprise": true, "skill_bonus": 4, "damage_bonus": 2}}]}
    ]},
   {"type": "power", "id": "hulk_leap", "name": "leap",
-   "description": "Clears a room in one bound, straight up onto the mezzanine if need be.",
+   "description": "Clears a room in one bound: any spot in sight within 20 tiles, up to two levels up.",
    "cost": {"stamina": 1}, "time_ms": 1000,
    "ai_condition": {"and": [{"has_target": true}, {"sees_target": true},
                             {"not": {"target_reachable": true}}]},
+   "targeting": "tile", "range": 20,
    "effects": [
      {"leap": {"range": 20, "max_rise": 2}},
-     {"message": "{self} leaps and lands next to {target} with a crash."}
+     {"if": {"chose_spot": true},
+      "then": [{"message": "{self} leaps and lands with a crash."}],
+      "else": [{"message": "{self} leaps and lands next to {target} with a crash."}]}
    ]},
   {"type": "power", "id": "hulk_hurl", "name": "hurl",
-   "description": "Picks a soldier up and throws him at another one.",
+   "description": "Picks up whoever's next to you and throws them where you point (at another one, say).",
    "cost": {"stamina": 1}, "time_ms": 1000, "noise": "crash",
    "ai_condition": {"and": [{"has_target": true},
                             {"compare": [{"distance_to_target": {}}, "<=", 1]},
                             {"compare": [{"count_enemies": {"radius": 10}}, ">=", 2]},
                             {"chance": 0.5}]},
+   "targeting": "tile", "range": 30,
    "effects": [{"hurl": {"toward": "enemy"}}]}
 ]

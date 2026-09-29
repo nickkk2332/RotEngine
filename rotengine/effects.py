@@ -285,7 +285,8 @@ def _v_blood(args, ctx):
 def _v_fractures(args, ctx):
     """Broken bones not yet splinted."""
     who = ctx.who(args)
-    return sum(p.fractured and not p.splinted and not p.destroyed for p in who.body.parts.values()) if who else 0
+    return sum((p.fractured and not p.splinted or p.dislocated) and not p.destroyed
+               for p in who.body.parts.values()) if who else 0
 
 
 @value("distance_to_target")
@@ -363,6 +364,22 @@ def _c_has_trait(args, ctx):
 @condition("has_target")
 def _c_has_target(flag, ctx):
     return (ctx.target is not None and ctx.target.active) == bool(flag)
+
+
+@condition("chose_spot")
+def _c_chose_spot(flag, ctx):
+    """The user picked a tile for this power (the player aiming it), rather
+    than letting it work off the target (the AI)."""
+    return (ctx.vars.get("dest") is not None) == bool(flag)
+
+
+def _spot_ok(ctx, dest, rng: float, max_rise: float | None = None) -> bool:
+    """A tile you could blink or leap to: in range and in sight, with room
+    to stand."""
+    sim, me = ctx.sim, ctx.self
+    return (sim.world.in_bounds(dest) and sim.distance_pos(me.pos, dest) <= rng
+            and (max_rise is None or dest[2] - me.pos[2] <= max_rise)
+            and sim.is_free(dest, ignore=me) and (dest == me.pos or sim.world.has_los(me.pos, dest)))
 
 
 @condition("sees_target")
@@ -449,6 +466,11 @@ def _e_splint(args, ctx):
     who = ctx.who(args)
     if who is None or who.dead:
         return
+    out = [p for p in who.body.parts.values() if p.dislocated and not p.destroyed]
+    if out:  # a joint out of its socket gets put back first
+        out[0].dislocated, out[0].note = False, ""
+        ctx.sim.log(f"  {who.name}'s {out[0].name} is put back into place.")
+        return
     broken = [p for p in who.body.parts.values() if p.fractured and not p.splinted and not p.destroyed]
     if broken:
         part = max(broken, key=lambda p: p.damage)
@@ -520,8 +542,16 @@ def _e_for_each_enemy(args, ctx):
 
 @effect("teleport")
 def _e_teleport(args, ctx):
-    """Move self next to the target, on its far side when possible. Needs
-    line of sight to the target, like Dishonored's blink."""
+    """Blink: to the tile the player picked (in sight and in range), or,
+    for the AI, next to the target on its far side. Needs line of sight,
+    like Dishonored's blink."""
+    dest = ctx.vars.get("dest")
+    if dest is not None:
+        if dest == ctx.self.pos or not _spot_ok(ctx, dest, evaluate(args.get("range", 99), ctx)):
+            ctx.vars["_abort"] = True
+            return
+        ctx.sim.move_creature(ctx.self, dest)
+        return
     target = ctx.target
     if (target is None or ctx.sim.distance(ctx.self, target) > evaluate(args.get("range", 99), ctx)
             or not ctx.sim.world.has_los(ctx.self.pos, target.pos)):
@@ -536,7 +566,16 @@ def _e_teleport(args, ctx):
 
 @effect("leap")
 def _e_leap(args, ctx):
-    """Jump to the target: up onto ledges, across gaps. No walking needed."""
+    """Jump to a tile (the player's pick) or next to the target: up onto
+    ledges, across gaps. No walking needed."""
+    dest = ctx.vars.get("dest")
+    if dest is not None:
+        if dest == ctx.self.pos or not _spot_ok(ctx, dest, evaluate(args.get("range", 8), ctx),
+                                                evaluate(args.get("max_rise", 1), ctx)):
+            ctx.vars["_abort"] = True
+            return
+        ctx.sim.move_creature(ctx.self, dest)
+        return
     target = ctx.target
     if (target is None or ctx.sim.distance(ctx.self, target) > evaluate(args.get("range", 8), ctx)
             or target.pos[2] - ctx.self.pos[2] > evaluate(args.get("max_rise", 1), ctx)
@@ -563,17 +602,27 @@ def _spots_near(sim, target):
 
 @effect("hurl")
 def _e_hurl(args, ctx):
-    """Grab the (adjacent) target and throw them: at the nearest other enemy
-    if "toward": "enemy", otherwise straight away from you."""
+    """Grab the (adjacent) target and throw them: toward the tile the player
+    picked, or at the nearest other enemy if "toward": "enemy", otherwise
+    straight away from you."""
     from .physics import hurl
+    sim, dest = ctx.sim, ctx.vars.get("dest")
     t = ctx.target
-    if t is None or t.dead or not ctx.sim.in_melee_reach(ctx.self.pos, t.pos):
+    if dest is not None and (t is None or t.dead or not sim.in_melee_reach(ctx.self.pos, t.pos)):
+        near = [e for e in sim.enemies_of(ctx.self) if sim.in_melee_reach(ctx.self.pos, e.pos)]
+        near += [c for c in sim.creatures if not c.dead and not c.active and c.team != ctx.self.team
+                 and sim.in_melee_reach(ctx.self.pos, c.pos)]
+        t = min(near, key=lambda c: sim.distance_pos(c.pos, dest), default=None)
+    if t is None or t.dead or not sim.in_melee_reach(ctx.self.pos, t.pos):
         ctx.vars["_abort"] = True
         return
     sx, sy, _ = ctx.self.pos
     tx, ty, _ = t.pos
     d = ((tx > sx) - (tx < sx), (ty > sy) - (ty < sy))
-    if args.get("toward") == "enemy":
+    if dest is not None:
+        ox, oy = (dest[0], dest[1]) if dest[:2] != t.pos[:2] else (2 * tx - sx, 2 * ty - sy)
+        d = ((ox > tx) - (ox < tx), (oy > ty) - (oy < ty))
+    elif args.get("toward") == "enemy":
         others = [e for e in ctx.sim.enemies_of(ctx.self) if e is not t and e.pos[2] == t.pos[2]]
         if others:
             o = min(others, key=lambda e: ctx.sim.distance(t, e))

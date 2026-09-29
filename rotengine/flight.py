@@ -97,7 +97,7 @@ def _step(sim: "Sim", f: Flight) -> None:
 
 # -- bodies ------------------------------------------------------------------------
 def launch_body(sim: "Sim", target: "Creature", direction: tuple[int, int], tiles: int,
-                on_land: Callable | None = None) -> None:
+                on_land: Callable | None = None, thrower: "Creature | None" = None) -> None:
     """Send a creature (or a corpse) flying `tiles` tiles in `direction`."""
     if tiles <= 0:
         return
@@ -107,7 +107,8 @@ def launch_body(sim: "Sim", target: "Creature", direction: tuple[int, int], tile
     target.aim_target = None
     if not target.dead:
         target.add_status("airborne", sim.time + step_ms * tiles + 50)
-    _start(sim, Flight("body", target, target.pos, step_ms, dx, dy, tiles, tiles, on_land=on_land))
+    _start(sim, Flight("body", target, target.pos, step_ms, dx, dy, tiles, tiles, on_land=on_land,
+                       thrower=thrower))
 
 
 def _body_step(sim: "Sim", f: Flight) -> bool:
@@ -134,6 +135,8 @@ def _body_step(sim: "Sim", f: Flight) -> bool:
                 return False
             sim.terrain_changed()
         blocker = sim.creature_at(nxt)
+        if blocker is not None and blocker is f.thrower:
+            blocker = None  # thrown over your own shoulder: they go over you, not into you
         if blocker is not None and blocker is not target:
             slam = Dice(remaining, 6).roll(sim.rng)
             sim.log(f"  {target.name} crashes into {blocker.name}!")

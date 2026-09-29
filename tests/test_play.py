@@ -477,3 +477,28 @@ def test_a_bullet_in_the_air_is_drawn():
     sim.time += 10  # a few tiles out of the barrel
     assert any(f.kind == "tracer" for f in flight.active(sim))
     assert screen_text(app).count("*") > before
+
+
+def test_blink_goes_where_you_point_and_doesnt_attack():
+    from rotengine.ui.game import GameScreen
+    scenario = {"id": "yard", "name": "Yard", "levels": [["," * 20] * 7],
+                "teams": {"you": [{"creature": "assassin", "at": [2, 3, 0]}],
+                          "them": [{"creature": "sentry", "at": [15, 3, 0]}]}}
+    app = new_app()
+    content = app.content_for(scenario)
+    sim = arena.build(scenario, content, seed=1)
+    app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 1)
+    p, guard = g.player, sim.creatures[1]
+    letter = chr(ord("a") + next(i for i, pw in enumerate(p.powers) if pw["id"] == "blink"))
+    app.handle_key("p")
+    app.handle_key(letter)
+    assert g.mode == "poweraim"
+    g.cursor = (8, 5, 0)  # an empty spot, off to the side
+    app.handle_key("enter")
+    assert p.pos == (8, 5, 0) and guard.hp == guard.max_hp
+    # onto someone: you land behind them, facing them, and nobody gets hit yet
+    app.handle_key("p")
+    app.handle_key(letter)
+    g.cursor = guard.pos
+    app.handle_key("enter")
+    assert sim.in_melee_reach(p.pos, guard.pos) and guard.hp == guard.max_hp

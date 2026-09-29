@@ -355,6 +355,8 @@ def _first_aid(sim: "Sim", c: "Creature", allies: bool) -> int | None:
     in sight, your friends' once the fighting is over."""
     if not c.body.functional_with("grasp"):
         return None
+    if c.body.bleed_rate <= 0.05 and any(p.dislocated for p in c.body.parts.values()):
+        return actions.reset_joint(sim, c, c)  # nothing bleeding: put the shoulder back in
     patients = [c] if c.body.bleed_rate > 0.05 else []
     if allies:
         patients += [a for a in sim.creatures if a.team == c.team and a is not c

@@ -140,6 +140,32 @@ def bandage(sim: "Sim", c: "Creature", patient: "Creature") -> int | None:
     return FIRST_AID_MS
 
 
+RESET_MS = 3000
+
+
+def reset_joint(sim: "Sim", c: "Creature", patient: "Creature") -> int | None:
+    """Put a dislocated joint back (yours at -3, or someone's in reach).
+    It hurts. It works on a good roll."""
+    out = [p for p in patient.body.parts.values() if p.dislocated and not p.destroyed]
+    if not out or not c.body.functional_with("grasp") or patient.dead:
+        return None
+    if patient is not c and not sim.in_melee_reach(c.pos, patient.pos):
+        return None
+    part = out[0]
+    skill = c.skill("first_aid") + 1 - c.action_penalty() - (3 if patient is c else 0)
+    r = check(sim.rng, skill)
+    training.practice(sim, c, "first_aid", skill, r.success)
+    whose = "their own" if patient is c else f"{patient.name}'s"
+    with sim.focus(c.pos, patient.pos):
+        if r.success:
+            part.dislocated, part.note = False, ""
+            sim.log(f"{c.name} wrenches {whose} {part.name} back into place.")
+        else:
+            sim.log(f"{c.name} can't get {whose} {part.name} back in.")
+    perception.emit_noise(sim, patient, patient.pos, "scream")
+    return RESET_MS
+
+
 def usable(c: "Creature") -> list:
     """Carried things with a "use" block (medicine)."""
     return [i for i in c.carried if "use" in i.data]
@@ -413,7 +439,8 @@ def power_blocked(sim: "Sim", c: "Creature", power: dict) -> str | None:
     return None
 
 
-def use_power(sim: "Sim", c: "Creature", power: dict, target: "Creature | None") -> int | None:
+def use_power(sim: "Sim", c: "Creature", power: dict, target: "Creature | None",
+              dest: "Pos | None" = None) -> int | None:
     if power_blocked(sim, c, power):
         return None
-    return combat.use_power(sim, c, power, target)
+    return combat.use_power(sim, c, power, target, dest)

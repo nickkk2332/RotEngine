@@ -703,7 +703,9 @@ class GameScreen(Screen):
         near = [a for a in sim.creatures if a.team == p.team and a is not p and not a.dead
                 and a.body.bleed_rate > 0.05 and sim.in_melee_reach(p.pos, a.pos)]
         if not near:
-            self.notice = "Nobody here is bleeding in a way first aid can fix."
+            if any(q.dislocated for q in p.body.parts.values()):
+                return self._do(actions.reset_joint(sim, p, p), "You can't do that right now.")
+            self.notice = "Nobody here is bleeding (or out of joint) in a way first aid can fix."
             return None
         worst = max(near, key=lambda a: a.body.bleed_rate)
         return self._do(actions.bandage(sim, p, worst))
@@ -781,6 +783,13 @@ class GameScreen(Screen):
             if why:
                 self.notice = f"{power['name']}: {why}."
                 return None
+            if power.get("targeting") == "tile":  # aim it: pick the spot
+                t = self.target
+                self.mode, self._power = "poweraim", power
+                self.cursor = t.pos if t is not None and self._sees(t) else self.player.pos
+                self.view_z = self.cursor[2]
+                self.notice = f"{power['name']} where? (cursor, [ ] level, Enter)"
+                return None
             self.mode = "play"
             before = len(self.sim.lines)
             self._do(actions.use_power(self.sim, self.player, power, self.target))
@@ -789,6 +798,67 @@ class GameScreen(Screen):
                                if self.target is None or not self._sees(self.target)
                                else f"{power['name']} fizzled: out of range, or nowhere to land.")
             return None
+        return None
+
+    def _power_spot(self) -> tuple["Pos | None", "Creature | None", str]:
+        """Where the aimed power would take you (or throw them), whose tile
+        the cursor is on, and what's wrong with it ("" if nothing)."""
+        sim, p, power, pos = self.sim, self.player, self._power, self.cursor
+        who = next((c for c in sim.creatures if c.pos == pos and not c.dead and c is not p), None)
+        rng = power.get("range", 99)
+        if sim.distance_pos(p.pos, pos) > rng:
+            return pos, who, f"too far (max {rng})"
+        if pos != p.pos and pos not in self.visible:
+            return pos, who, "you can't see there"
+        if power["id"] == "hulk_hurl" or any("hurl" in e for e in power["effects"]):
+            return pos, who, ""
+        if who is not None:
+            return pos, who, "" if who.team != p.team else "someone's standing there"
+        if pos == p.pos:
+            return pos, who, "that's where you are"
+        if not sim.is_free(pos):
+            return pos, who, "no room to stand there"
+        return pos, who, ""
+
+    def _key_poweraim(self, key: str):
+        d = self._direction(key)
+        if d is not None:
+            x, y, z = self.cursor
+            nxt = (x + d[0], y + d[1], z)
+            if self.sim.world.in_bounds(nxt):
+                self.cursor = nxt
+        elif key in ("[", "]"):
+            z = max(0, min(self.sim.world.depth - 1, self.cursor[2] + (1 if key == "]" else -1)))
+            self.cursor = (self.cursor[0], self.cursor[1], z)
+            self.view_z = z
+        elif key in ("tab", "shift-tab"):
+            self._cycle_target(1 if key == "tab" else -1)
+            if self.target is not None:
+                self.cursor = self.target.pos
+                self.view_z = self.cursor[2]
+        elif key == "esc":
+            self.mode, self.cursor, self.notice = "play", None, ""
+            self.view_z = self.player.pos[2]
+        elif key in ("enter", "p"):
+            p, sim, power = self.player, self.sim, self._power
+            pos, who, why = self._power_spot()
+            if why:
+                self.notice = f"{power['name']}: {why}."
+                return None
+            hurling = any("hurl" in e for e in power["effects"])
+            if who is not None and not hurling:  # onto someone: land right behind them
+                pos = sim.spot_near(who, behind_from=p.pos)
+                if pos is None:
+                    self.notice = f"{power['name']}: no room next to {who.name}."
+                    return None
+            self.mode, self.cursor = "play", None
+            self.view_z = p.pos[2]
+            before = len(sim.lines)
+            self._do(actions.use_power(sim, p, power, self.target, pos))
+            if who is not None and not hurling and p.pos == pos:
+                combat.face(p, who.pos)  # and you arrive facing them
+            if any("fizzles" in line for line in sim.lines[before:]):
+                self.notice = f"{power['name']} fizzled: out of range, out of sight, or nowhere to land."
         return None
 
     def _key_look(self, key: str):
@@ -1123,6 +1193,14 @@ class GameScreen(Screen):
                         tiles[pos] = side
         return tiles
 
+    def _lying(self, c: Creature, fallback: str) -> str:
+        """Someone lying down (prone, out cold, dead): their letter tipped
+        onto its side, if the font has it (the real window's does)."""
+        if getattr(self.app, "lying_glyphs", False) and len(c.glyph) == 1 and (c.glyph.isalpha() or c.glyph == "@"):
+            from .app import LYING_BASE
+            return chr(LYING_BASE + ord(c.glyph))
+        return fallback
+
     def _render_map(self, con) -> None:
         w, z = self.sim.world, self.view_z
         ox, oy = self._camera()
@@ -1174,12 +1252,13 @@ class GameScreen(Screen):
                 if state != layer or c.pos[2] != z or not self._sees(c):
                     continue
                 if state == "dead":
-                    marks[c.pos[:2]] = ("%", DARK_RED, None)
+                    marks[c.pos[:2]] = (self._lying(c, "%"), DARK_RED, None)
                 elif state == "down":
-                    marks[c.pos[:2]] = ("&", RED if c.team != self.player.team else GREEN, None)
+                    marks[c.pos[:2]] = (self._lying(c, "&"), RED if c.team != self.player.team else GREEN, None)
                 else:
                     fg = YELLOW if c is self.player else GREEN if c.team == self.player.team else RED
-                    marks[c.pos[:2]] = (c.glyph, fg, self._alert_bg(c))
+                    glyph = self._lying(c, c.glyph) if c.has_status("prone") else c.glyph
+                    marks[c.pos[:2]] = (glyph, fg, self._alert_bg(c))
         # people you can see on other levels: drawn where they stand, tinted
         # purple above you and blue below (magenta if they're aiming at you)
         for c in self.sim.creatures:
@@ -1322,9 +1401,11 @@ class GameScreen(Screen):
         elif pen < 0:
             con.print(x, y, f"Bonus +{-pen} to attacks"[:w], fg=GREEN)
             y += 1
-        if p.statuses:
-            con.print(x, y, ("Status: " + ", ".join(self.content.get("status", s)["name"]
-                                                     for s in p.statuses))[:w], fg=ORANGE)
+        shown = [s for s in p.statuses if not (s == "prone" and any(
+            self.content.get("status", o).get("no_stand") for o in p.statuses))]  # (collapsed says it)
+        for s in shown[:5]:
+            d = self.content.get("status", s)
+            con.print(x, y, (d["name"] + (f": {d['hint']}" if d.get("hint") else ""))[:w], fg=ORANGE)
             y += 1
         y += 1
         weapon = p.wielded
@@ -1543,7 +1624,8 @@ class GameScreen(Screen):
                      "move/bump · f attack · F quick · t throw · s sneak · G grab/hold · L let go · w swap · ? help"),
             "target": "Tab/arrows: choose target · Enter: attack options · Esc: back",
             "attack": "↑↓ location · ←→ feint · Space aim · < > attack · Enter go · Esc back",
-            "powers": "letter: use on your target · Esc: back",
+            "powers": "letter: use it (blink, leap, hurl: then pick the spot) · Esc: back",
+            "poweraim": "move the cursor · [ ] level · Tab: jump to a target · Enter: go · Esc: cancel",
             "look": "move the cursor · [ ] change level · Esc: done",
             "aim": "move the cursor · Tab: jump to a target · Enter: throw · Esc: cancel",
             "dir": "pick a direction · Esc: cancel",
@@ -1615,6 +1697,15 @@ class GameScreen(Screen):
                 if dist <= rng else f" {item.name}: {dist} tiles, too far (max {rng}) ")
         con.print(MAP_X + 1, MAP_Y + MAP_H - 1, text, fg=WHITE if dist <= rng else RED, bg=PANEL_BG)
 
+    def _render_poweraim(self, con) -> None:
+        p, power = self.player, self._power
+        pos, who, why = self._power_spot()
+        dist = self.sim.distance_pos(p.pos, pos)
+        what = ("throw toward here" if any("hurl" in e for e in power["effects"])
+                else f"land behind {who.name}" if who is not None else "land here")
+        text = f" {power['name']}: {dist} tiles · " + (why if why else what) + " "
+        con.print(MAP_X + 1, MAP_Y + MAP_H - 1, text, fg=RED if why else WHITE, bg=PANEL_BG)
+
     def _render_target(self, con) -> None:
         t = self.target
         if t is not None:
@@ -1625,9 +1716,11 @@ class GameScreen(Screen):
         powers = self.player.powers
         box(con, 6, 6, 56, 5 + 3 * len(powers), "Powers")
         t = self.target
-        on = (f"on your target: {t.name} (Tab to change)" if t is not None and self._sees(t)
+        aimed = any(pw.get("targeting") == "tile" for pw in powers)
+        on = ("aimed powers: pick one, then move the cursor to the spot" if aimed
+              else f"on your target: {t.name} (Tab to change)" if t is not None and self._sees(t)
               else "no target in sight: powers that need one will fizzle")
-        con.print(8, 7 + 3 * len(powers), on[:52], fg=CYAN if t is not None else ORANGE)
+        con.print(8, 7 + 3 * len(powers), on[:52], fg=CYAN if aimed or t is not None else ORANGE)
         for i, pw in enumerate(powers):
             why = actions.power_blocked(self.sim, self.player, pw)
             cost = pw.get("cost", {}).get("stamina", 0)

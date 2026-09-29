@@ -75,6 +75,12 @@ reaches into every other time-based rule:
 * **Momentum:** traits with `momentum_exponent` scale muscle damage by tempo^exp.
   Super speed uses 0.5, so ST 11 hits like ST 31.
 * Stamina recovery runs on own time too.
+* **Reaction time (NPCs only):** step into someone's reach and they need 0.4 s of
+  their own time before they can answer it; attack someone who never saw you (hit or
+  miss) and they need 0.9 s to gather themselves. `combat_reflexes` halves both
+  (`reaction_mult`). The player has their own reaction time, so they don't get one:
+  closing in on someone gives you the first blow, and a botched ambush a moment to
+  recover.
 
 A 1-second world tick handles physiology for everyone: bleeding, clotting,
 hypoxia, fainting and waking, stamina recovery, statuses running out, `on_second` hooks.
@@ -110,9 +116,15 @@ so you can hardly miss, but a sloppy swing still does what its dice say.
 | Prone | −3 |
 | Pain | half the pain penalty |
 | Blood loss / fatigue | the same penalty as for attacks |
-| Unconscious, taken by surprise (blink), or a critical hit | no defense |
+| Unconscious, taken by surprise, or a critical hit | no defense |
 
 A successful defense stops one hit, plus one more per point of margin.
+
+**Parrying something much stronger** (the attacker's striking ST, momentum included,
+over yours): at 1.5× the parry holds, but the force goes into your weapon arm
+(the blow's damage × (1 − 1/ratio), crushing) and may tear the weapon out of your hand
+(an ST roll at −4 per extra multiple); at 3× it smashes straight through your guard.
+Parrying the Hulk is not a plan.
 
 **Rounds are physical.** A missed shot that fails by no more than the cover penalty
 hits the cover, and punches through into the target if it beats the cover's DR. Every
@@ -235,6 +247,47 @@ blunt force go all the way. So the knife has two real modes: **slash** (+1 to hi
 bleeding and dismemberment) and **stab** (−1 to hit, ×2, ×3 into the vitals: the one
 that reaches the heart).
 
+**Organs.** The torso, vitals and abdomen list what's underneath them (`organs`). A
+wound whose deep part reaches 0.2 × HP (a stab or a bullet easily; a slash only when
+it's very deep; a blunt blow only at 0.45 × HP) hits one of them by weight, or
+nothing vital, and the log says what: "The round tears through thug 2's liver: heavy
+bleeding inside!"
+
+| Organ | Where | What it does |
+|---|---|---|
+| Heart | vitals | 2%/s internal bleeding, and half the time it stops (cardiac arrest) |
+| Aorta | vitals | 4%/s internal bleeding |
+| Lung (left, right) | torso, vitals | internal bleeding; `punctured_lung`: air can't recover past 60%, −1. Both: `both_lungs`, you can't breathe |
+| Liver, spleen, kidney | torso, abdomen | heavy internal bleeding |
+| Stomach, intestines | torso, abdomen | slower internal bleeding (a gut wound) |
+| Spine | torso | 60%: `spine_severed`, legs dead (crawl with your arms); otherwise a cracked vertebra |
+| Femoral artery | abdomen | 2%/s external (arterial) bleeding |
+
+**Blunt force.** A limb breaks at half your HP of crushing and is only pulped
+("leg smashed to a pulp") by one blow of twice what would cut it off, so a Hulk punch
+to an arm breaks it about three times in four and pulps it the rest. Crushing that
+reaches the organs bleeds 2.5× as hard inside. Once the ribs are broken, another
+heavy blunt blow to the chest (a quarter of your HP) has a 30% chance to drive a rib
+into a lung, or the heart.
+
+**Dislocation.** A wrench in a hold (70%), or a hard blunt hit (20%), that falls
+short of breaking a limb can put the joint out: shoulder, knee, wrist, ankle.
+Useless and as painful as a break until someone puts it back (`b` first aid, 3 s,
+yours at −3; a splint kit does it too).
+
+**Losing a limb.** Arterial bleeding (arms 1.5%/s, legs 2%/s, hands and feet 1%/s),
++2 pain for each limb gone, and a WIS roll at −4 not to collapse from the pain on
+the spot. A man whose leg has just been destroyed is on the floor, bleeding out and
+in no state to aim.
+
+**Knockdown vs stun.** Missing the knockdown roll by 2 or less staggers you, stunned
+where you stand; by more, you're down as well.
+
+**Prone vs collapsed.** *Prone* is lying down: you chose to, or were knocked down, and
+`z` gets you up. *Collapsed* is your legs giving out from pain or exhaustion: you
+can't stand until a WIS roll (every 10 s) lets you. Both are lying down; the side
+panel says which, and what it means.
+
 **Weapon modes.** Any weapon can list several attacks; the attack menu (`f`, then
 `< >`) cycles them with their odds. Knife: slash / stab. Sabre: cut / thrust (−1).
 Bat: swing / jab (+1, faster). Pistol: single shot (+1, no strays) / rapid fire (3
@@ -252,10 +305,10 @@ The balance numbers are checked by `tests/test_arena.py` and `--runs`:
 * **Hulk:** DR 25 against a 5d6 rifle means only the far tail (≥ 26, about 3%)
   penetrates, and then only for a point or two. HP 60, regeneration and `tireless`
   absorb the rest. Going the other way, 5d+2 crushing against a DR 4 vest breaks ribs
-  and knocks soldiers out, and the knockback (damage ÷ (ST−2) tiles) throws bodies
-  through drywall and off the mezzanine. Result: 100% wins. Most soldiers survive the
-  fight unconscious; the dead mostly bled out afterwards, and about 1 in 6 were torn
-  apart outright.
+  and knocks soldiers out, and the knockback (see 7) throws bodies four to eight
+  tiles, through drywall and off the mezzanine. Result: ~99% wins. About half the
+  soldiers end up unconscious; a quarter die, mostly of what the punches did inside
+  (a ruptured liver or spleen, a rib through a lung), some torn apart outright.
 * **Wick:** guns 20 at 6 tiles is 16 after range; −3 for the vitals leaves 13. A 9 mm
   round to the heart and lungs usually stops the heart. `gun_fu` makes his shots take
   0.6 s. Result: about 82% against 8 thugs, who mostly die in the aftermath.
@@ -280,7 +333,12 @@ have per-voxel HP and DR from their material. Arrays are numpy `[z, y, x]`.
 * **Line of sight / fire:** a 3D line. Opaque fills and floors block it; transparent
   solids (glass, grates) let it through but add DR and get damaged (windows shatter).
 * **Penetration:** missed shots continue and chew through thin walls.
-* **Knockback:** a body flies tile by tile through world time (`flight.py`): 8 + 2 ×
+* **Knockback** (crushing blows): damage rolled ÷ the target's ST, × (the hitter's
+  striking ST ÷ the target's ST)^0.75 when the hitter is stronger, in tiles. Two
+  average people barely shove each other; the Hulk (ST 60) sends an ST-11 soldier 4–8
+  tiles with a punch. A body thrown over your own shoulder goes over you, not into
+  you.
+* **Flight:** a body flies tile by tile through world time (`flight.py`): 8 + 2 ×
   tiles tiles per second, `airborne` (can't act, −4 to defend) until it lands.
   Hitting a wall damages both, and if the wall breaks the body keeps going; hitting
   a person knocks them down; leaving a floor edge, it falls. Everyone else keeps
@@ -650,6 +708,14 @@ An effect list is a list of single-op objects:
 **Hooks** on traits and statuses: `on_damaged` (var `damage`), `on_second`, `on_kill`.
 **Powers** have `cost.stamina`, `time_ms`, optional `cooldown_ms`, `effects`, and an
 `ai_condition` that NPCs use to decide when to fire them. Modded powers get used sensibly without new AI code.
+`"targeting": "tile"` (with `"range"`) makes the player aim it: `p`, the letter, then a
+cursor (`[ ]` for another level, Tab to jump to someone, Enter). The picked tile
+reaches the effects as the `dest` variable (`teleport`, `leap` and `hurl` use it), and
+the `chose_spot` condition tells the player's use from the AI's. So blink goes
+anywhere you can see within 14 tiles without forcing an attack (put the cursor on
+someone to land behind them, facing them), while an AI assassin still blinks behind
+its target and strikes. Leap goes to any spot in sight, up to two levels up; hurl
+throws whoever's next to you toward the spot you pick.
 
 **Python plugins** extend the language:
 ```python

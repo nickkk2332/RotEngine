@@ -29,7 +29,7 @@ architecture, the rules, and the roadmap.
 | `T` / `P` | hurl the person you're holding / plant a breaching charge (then a direction) |
 | `B` / `c` | smash a wall, door or window / close a door (then a direction); walk into doors to open them |
 | `v` | show whole vision cones (an arrow in front of each enemy always shows which way they face) |
-| `p` | powers |
+| `p` | powers: blink, leap and hurl are aimed with a cursor after you pick them (`[ ]` another level, Enter to go) |
 | `<` `>` | stairs up / down; `>` on a stairwell (yellow `>`) takes you to the next floor |
 | `[` `]` | view the level below / above |
 | `x` | look: inspect terrain and anyone's wounds |
@@ -83,12 +83,12 @@ python -m pytest
 | Scenario | Result |
 |---|---|
 | Street fight: two average people with knives | ~50/50; the loser is usually unconscious, occasionally bleeds out later |
-| The Hulk (ST 60, DR 25) vs 10 armoured riflemen | Hulk wins ~98%; soldiers mostly end up unconscious with broken ribs, the rest missing arms or heads |
-| John Wick (guns 20) vs 8 armed thugs | Wick wins ~91%; most thugs die of blood loss after the fight |
-| Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~59%; loses to simultaneous bursts |
-| Blink assassin vs 6 guards, 2 with pistols (starting unseen) | Assassin wins ~16% (~22% end with both sides out of it). Deliberately hard once it turns into an open fight |
+| The Hulk (ST 60, DR 25) vs 10 armoured riflemen | Hulk wins ~99%; he punches soldiers across the room. About half end up unconscious with broken ribs and limbs, a quarter dead (ruptured organs, ribs driven into lungs, torn apart) |
+| John Wick (guns 20) vs 8 armed thugs | Wick wins ~84%; most thugs die of blood loss after the fight |
+| Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~61%; loses to simultaneous bursts |
+| Blink assassin vs 6 guards, 2 with pistols (starting unseen) | Assassin wins ~24% (~23% end with both sides out of it). Deliberately hard once it turns into an open fight |
 | Night infiltration: the operative vs 6 guards who don't know you're there | For playing: keep to the shadows, choke them out, hide the bodies |
-| Breach and clear: 4 SWAT (grenades, flashbangs, smoke, charges) vs 6 barricaded occupants (Molotovs) | SWAT wins ~99%, usually losing people to shotguns and their own grenades |
+| Breach and clear: 4 SWAT (grenades, flashbangs, smoke, charges) vs 6 barricaded occupants (Molotovs) | SWAT wins ~98%, usually losing people to shotguns and their own grenades |
 
 Map glyphs: creatures by their template glyph, `&` someone down (unconscious), `%` a
 corpse, dropped weapons by their item glyph. Terrain: `#` concrete/brick, `|` drywall,
@@ -98,6 +98,10 @@ Enemy markings: an arrow in front of each enemy shows which way they face (red i
 they know you're there). Background: amber = suspicious, red = has spotted you,
 magenta = aiming at you. Your target is black on bright yellow. Enemies you can see
 on the level above are drawn purple where they stand, below blue.
+
+Anyone lying down (prone, out cold or dead) is drawn with their letter tipped onto
+its side: bright if they're still in it, dark red if they're dead. Your statuses in
+the side panel say what each one means ("collapsed: legs gave out (pain)...").
 
 Bullets are drawn in flight (`*` with a short trail, in slow motion), and each hit
 flashes its tile: red a hit, yellow a critical, grey a miss, blue a parry or dodge.

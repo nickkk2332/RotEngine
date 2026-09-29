@@ -28,6 +28,7 @@ class App:
         self.screen: Screen = MainMenu(self)
         self.running = True
         self.animate = False  # the real window plays flights out frame by frame (tests don't)
+        self.lying_glyphs = False  # the font has tipped-over letters for people lying down
 
     def content_for(self, scenario: dict) -> Content:
         key = tuple(sorted(set(self.mods) | set(scenario.get("mods", []))))
@@ -83,17 +84,50 @@ class App:
 FONT_CHOICES = ("mono", "mono-large", "square12", "square16")
 
 
+LYING_BASE = 0xE000  # private-use codepoints: the same glyphs, lying on their side
+
+
+def add_lying_glyphs(ts: tcod.tileset.Tileset) -> None:
+    """For every letter (and @), a copy tipped over onto its side, for anyone
+    lying down (see GameScreen: prone, out cold, dead). Trimmed to the ink,
+    turned 90 degrees, scaled to fit and set on the bottom of the cell."""
+    import numpy as np
+    w, h = ts.tile_width, ts.tile_height
+    for ch in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@&":
+        tile = ts.get_tile(ord(ch))
+        ink = np.argwhere(tile[..., 3] > 40)
+        if not len(ink):
+            continue
+        (y0, x0), (y1, x1) = ink.min(0), ink.max(0) + 1
+        glyph = np.rot90(tile[y0:y1, x0:x1], k=-1)  # clockwise: the head goes to the right
+        gh, gw = glyph.shape[:2]
+        scale = min(1.0, w / gw, (h * 0.6) / gh)
+        nw, nh = max(1, round(gw * scale)), max(1, round(gh * scale))
+        ys = (np.arange(nh) / scale).astype(int).clip(0, gh - 1)
+        xs = (np.arange(nw) / scale).astype(int).clip(0, gw - 1)
+        small = glyph[ys][:, xs]
+        out = np.zeros_like(tile)
+        top, left = h - nh - max(1, h // 10), (w - nw) // 2
+        out[top:top + nh, left:left + nw] = small
+        out[..., :3] = 255
+        ts.set_tile(LYING_BASE + ord(ch), out)
+
+
 def load_font(name: str = "mono") -> tcod.tileset.Tileset:
     """'mono' / 'mono-large': DejaVu Sans Mono in terminal-shaped cells
     (10x20 / 12x24), easy on text. 'square12' / 'square16': classic square
     roguelike tiles, better proportioned maps but spaced-out text."""
     if name in ("mono", "mono-large"):
         w, h = (10, 20) if name == "mono" else (12, 24)
-        return tcod.tileset.load_tilesheet(FONTS / f"mono{w}x{h}.png", 16, 16, tcod.tileset.CHARMAP_CP437)
+        ts = tcod.tileset.load_tilesheet(FONTS / f"mono{w}x{h}.png", 16, 16, tcod.tileset.CHARMAP_CP437)
+        add_lying_glyphs(ts)
+        return ts
     if name in ("square12", "square16"):
         size = name[len("square"):]
-        return tcod.tileset.load_tilesheet(FONTS / f"dejavu{size}x{size}_gs_tc.png", 32, 8,
-                                           tcod.tileset.CHARMAP_TCOD)
+        ts = tcod.tileset.load_tilesheet(FONTS / f"dejavu{size}x{size}_gs_tc.png", 32, 8,
+                                         tcod.tileset.CHARMAP_TCOD)
+        add_lying_glyphs(ts)
+        return ts
     raise SystemExit(f"unknown font '{name}'; choose from {', '.join(FONT_CHOICES)}")
 
 
@@ -117,6 +151,7 @@ def main(scenario: str | None = None, play_as: str | None = None, seed: int | No
             window.start_text_input(autocorrect=False)
         keys = KeyReader()
         app.animate = True
+        app.lying_glyphs = True
         while app.running:
             app.render(console)
             context.present(console, keep_aspect=True, integer_scaling=True)
