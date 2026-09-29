@@ -132,6 +132,8 @@ class GameScreen(Screen):
         self.show_cones = False
         self._grab_who: Creature | None = None
         self.animating = False  # something's in the air and the App is playing it out
+        self.flashes: list[tuple] = []  # (pos, kind, real time it fades) from sim.fx
+        self._fx_i = 0
         self.journal: list[tuple[str, tuple]] = []  # what you witnessed, as it happened
         self._log_i = 0                              # how far into sim.lines the journal has read
         self.log_scroll = 0
@@ -189,6 +191,7 @@ class GameScreen(Screen):
             self.seen[pos] = self._tile(pos)
         self.view_z = self.player.pos[2]
         self._read_log()
+        self._read_fx()
 
     def _read_log(self) -> None:
         """Copy new log lines the player witnessed into the journal, judged
@@ -218,7 +221,8 @@ class GameScreen(Screen):
         self._advance()
 
     # -- animation -----------------------------------------------------------
-    FRAME_MS = 16  # world ms per animation frame: flights play out in real time
+    FRAME_MS = 16         # world ms per animation frame: thrown things play out in real time
+    BULLET_FRAME_MS = 2   # ... and bullets at 1/8 speed, so you can see them go
 
     def _advance(self) -> None:
         """Run the world to your next turn. In the real window, if something
@@ -233,9 +237,32 @@ class GameScreen(Screen):
             self.status = self.sim.advance()
         self._on_turn()
 
+    FLASH_S = 0.28
+    FLASH_BG = {"hit": (190, 30, 30), "crit": (240, 200, 40), "miss": (90, 90, 90), "block": (40, 150, 190)}
+
+    def _read_fx(self) -> None:
+        """Pick up the sim's new visual cues (hits, misses, parries) as
+        short flashes on the tiles they happened on, if you could see them."""
+        import time
+        now = time.monotonic()
+        fx = self.sim.fx
+        if self._fx_i > len(fx):
+            self._fx_i = 0
+        for pos, kind in fx[self._fx_i:]:
+            if pos in self.visible:
+                self.flashes.append((pos, kind, now + self.FLASH_S))
+        self._fx_i = len(fx)
+        self.flashes = [f for f in self.flashes if f[2] > now]
+
+    def needs_frames(self) -> bool:
+        """The App should keep redrawing (something's moving or flashing)."""
+        import time
+        return self.animating or any(f[2] > time.monotonic() for f in self.flashes)
+
     def tick(self) -> None:
         """One animation frame (called by the App while self.animating)."""
-        st = self.sim.advance_for(self.FRAME_MS)
+        bullets = any(f.kind == "tracer" for f in flight.active(self.sim))
+        st = self.sim.advance_for(self.BULLET_FRAME_MS if bullets else self.FRAME_MS)
         self._update_fov()
         if st in ("player", "over") or not flight.active(self.sim):
             self.animating = False
@@ -1109,6 +1136,16 @@ class GameScreen(Screen):
         for f in flight.active(self.sim):  # things in the air
             if f.kind == "item" and f.pos[2] == z and f.pos in self.visible:
                 marks[f.pos[:2]] = (f.obj.data.get("glyph", "*"), WHITE, (60, 60, 20))
+            elif f.kind == "tracer":
+                here = flight.tracer_pos(self.sim, f)
+                i = f.path.index(here) if here in f.path else 0
+                for back, (glyph, fg) in enumerate((("*", (255, 240, 150)), ("·", (230, 150, 60)),
+                                                    ("·", (140, 80, 40)))):
+                    if i - back < 0:
+                        break
+                    p = f.path[i - back]
+                    if p[2] == z and p in self.visible and p[:2] not in marks:
+                        marks[p[:2]] = (glyph, fg, None)
         for pos, item in self.sim.items:
             if pos[2] == z and pos in self.visible:
                 marks[pos[:2]] = (item.data.get("glyph", "("),
@@ -1141,6 +1178,11 @@ class GameScreen(Screen):
             if ox <= x < ox + MAP_W and oy <= y < oy + MAP_H:
                 con.print(MAP_X + x - ox, MAP_Y + y - oy, ch, fg=fg, bg=bg)
         self._render_facing(con, marks, z)
+        import time
+        now = time.monotonic()
+        for pos, kind, fades in self.flashes:
+            if pos[2] == z and fades > now:
+                self._highlight(con, pos, self.FLASH_BG.get(kind, GREY))
         t = self.target
         if t is not None and self._sees(t) and (t.pos[2] == z or t.pos[:2] in marks):
             self._highlight(con, t.pos, TARGET_BG)

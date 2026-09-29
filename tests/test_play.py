@@ -456,3 +456,24 @@ def test_facing_arrows_show_where_enemies_look():
     app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 1)
     row = [line for line in screen_text(app).splitlines() if "@" in line and "→" in line]
     assert row and row[0].index("→") == row[0].index("g") + 1  # the sentry (g) looks east, away from you
+
+
+def test_a_bullet_in_the_air_is_drawn():
+    from rotengine import combat, flight, perception
+    from rotengine.ui.game import GameScreen
+    scenario = {"id": "range", "name": "Range", "levels": [["," * 30] * 5],
+                "teams": {"you": [{"creature": "operative", "at": [2, 2, 0]}],
+                          "them": [{"creature": "soldier", "at": [25, 2, 0]}]}}
+    app = new_app()
+    content = app.content_for(scenario)
+    sim = arena.build(scenario, content, seed=1)
+    app.screen = g = GameScreen(app, scenario, content, sim, sim.creatures[0], 1)
+    shooter, p = sim.creatures[1], g.player
+    perception.make_all_aware(sim)
+    plan = next(x for x in combat.attack_plans(sim, shooter, p, allow_aim=False)
+                if x.attack["kind"] == "ranged")
+    before = screen_text(app).count("*")
+    combat.resolve_attack(sim, shooter, p, plan)
+    sim.time += 10  # a few tiles out of the barrel
+    assert any(f.kind == "tracer" for f in flight.active(sim))
+    assert screen_text(app).count("*") > before

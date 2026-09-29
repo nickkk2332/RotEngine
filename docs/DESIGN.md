@@ -91,7 +91,10 @@ hypoxia, fainting and waking, stamina recovery, statuses running out, `on_second
 + hit location (vitals −3, face/neck −5, skull −7)
 − 2 per level of deceptive attack
 − shock − pain − blood loss − fatigue − status modifiers (prone: −4 in melee, and
-shooting at a prone target is −2).
+shooting at a prone target is −2)
++ helpless targets: +2 in melee against someone prone, +5 against someone
+unconscious, whose hit-location penalties are also halved. They can't defend either,
+so you can hardly miss, but a sloppy swing still does what its dice say.
 
 **Hit:** if the roll succeeds. Rapid fire gives one extra hit per `recoil` points of margin.
 
@@ -116,6 +119,16 @@ hits the cover, and punches through into the target if it beats the cover's DR. 
 round that misses, gets dodged or isn't part of the hit count keeps flying. It can hit
 anyone in its path (3d6 ≤ 9), downed people included, then damages and possibly
 penetrates walls. Shooters won't fire with a teammate in the line of fire.
+
+**Bullets take time.** A shot is a tracer (`flight.launch_tracer`) that travels at
+the weapon's `velocity` in tiles per second (pistol 360, rifle 900; 400 if unset) and
+is settled when it arrives, against wherever the target is *then*. Across a room
+that's a few hundredths of a second, far too quick for anyone normal to matter; a
+tempo-8 speedster lives a few steps in that time, so one who sees it coming can be
+gone when it gets there ("...but X isn't there any more"), and the rounds fly on
+into whatever's behind. The window plays bullets in slow motion (1/8 speed) with a
+short trail, and flashes the tile of every hit (red), critical (yellow), miss (grey)
+and parry or dodge (blue) you can see.
 
 **Damage:** roll, subtract DR (part + natural + armor covering that part, per damage
 type), multiply by the wound multiplier (damage type × location). Skull ×4; vitals ×3
@@ -184,9 +197,11 @@ apart (−5×HP). Otherwise death comes from one of three things:
   It applies fully to attacks and half to defense.
 * **Agony:** a wound of half your HP or more, a fracture, or a lost part means a WIS
   roll; fail and you flinch, doubled over and helpless for 1.5 s (3 s if you fail badly).
-* **Knockdown:** a wound over 2/3 of your HP (a quarter, to the head) means a CON roll
-  (skull −10, face and vitals −5). Fail and you're stunned and down. Only a blow to a
-  `"concussion"` part (skull, face) can knock you out, on a fail by 5 or a fumble.
+* **Knockdown:** a wound over 2/3 of your HP (a quarter, for a blunt blow to the head)
+  means a CON roll (skull −10, face and vitals −5). Fail and you're stunned and down.
+  Only a *blunt* (`"concussive"` damage type) blow to a `"concussion"` part (skull,
+  face) can knock you out, on a fail by 5 or a fumble, and then for 15–90 s. A cut to
+  the head hurts and bleeds; it doesn't switch you off.
 * **Collapse (pain):** going into the red, or a wound of HP/3 or more once there, is a
   WIS roll (minus 1 per full HP below 0). Fail and your legs go: `collapsed`, down and
   unable to stand, but **awake**: you can still shoot, stab, crawl and use things, at
@@ -194,13 +209,15 @@ apart (−5×HP). Otherwise death comes from one of three things:
   collapses you the same way.
 * **Unconsciousness** comes from real causes only; going below 0 HP isn't one.
   - **Head trauma:** see Knockdown.
-  - **Shock:** every wound while below 0 HP is a CON + 4 roll to stay awake, at −2 per
-    full HP below 0, −2 below 70% blood (−4 below 60%) and −2/−4 graying out for air.
-    Easy just into the red, a coin flip at −2×HP; past −3×HP nobody stays awake.
-  - **Blood loss:** below 70%, the same roll every 10 s; below 50% you're out.
+  - **Trauma:** there's no per-wound shock knockout; pain collapses you instead (above).
+    Only past −4×HP does nobody stay awake (−5×HP is torn apart).
+  - **Blood loss:** below 70%, a CON + 4 roll every 10 s (−2 per full HP below 0, −2
+    below 70% blood, −4 below 60%, −2/−4 graying out for air); below 50% you're out.
   - **No air:** at 10% oxygen.
-  - Coming round: the same roll every 5 s, once HP > −2×HP, blood ≥ 60%, air ≥ 50%
-    and the heart is beating.
+  - **Coming round:** the same roll every 5 s, once HP > −4×HP, blood ≥ 55%, air ≥ 50%,
+    the heart is beating and the brain isn't badly damaged (hypoxia < 50). So it's a
+    race: a knocked-out man with a stable wound wakes in a minute or two; one bleeding
+    out stays under and dies unless someone bandages him.
 * **Giving up:** an NPC that's collapsed or below −½×HP rolls WIS (plus pain
   resistance, minus pain) each turn with enemies about; fail and they give up
   (`yielded`): they stop fighting, patch themselves up, and nobody targets them.
@@ -347,12 +364,17 @@ that grip allows.
 | Leg / foot | −2 / −4 | wrench, crush, **trip** (take down at +2) |
 | Their weapon | −3 melee, −2 pistol, −1 long gun | **wrest** it away (no leverage bonus; win and it's yours). *Risky*: fail against someone who saw you coming and a blade cuts your hand, or a gun goes off at you point-blank. A blade ripped free through your grip slices your fingers |
 
-* **Grab roll:** Wrestling at the location's penalty, then their defense if they
+* **Grab roll:** your best of Wrestling, Brawling or DEX, +2, at the location's
+  penalty (anyone who can fight can get hold of someone; what you do next is where
+  Wrestling counts), then their defense if they
   noticed you. Against someone who doesn't see it coming there's no defense and the
   penalty is halved (they aren't guarding their throat): a trained operative gets an
   arm around an unaware guard's neck ~75% of the time. A miss alerts them. Downed or
   dead bodies are simply taken hold of.
 * **Changing grip** is a new grab roll; a miss keeps the grip you had.
+* **A grab is an action** (a second of your time, like a swing), so everyone else
+  gets to act meanwhile, unless you're fast enough that a second of yours is a
+  fraction of theirs.
 * **While held:** can't move; −2 to attack, −3 to defend. The grip ends if the part
   comes off, the weapon is dropped, or the two of you are separated.
 * **Choke** (a blood choke): each second is a contest. Is it locked in? Your Wrestling
@@ -462,7 +484,7 @@ People can be thrown too:
   windows and off ledges, with landing damage on top. Thrown items fly at 20
   tiles/s the same way (a grenade's fuse keeps burning in the air; cook it too long
   and it goes off mid-flight; a Molotov bursts where it lands). The window plays
-  flights out as animation.
+  flights out as animation, bullets included (see Resolution).
 - The Hulk's JSON `hurl` power aims the thrown soldier at another soldier.
 
 **Explosives** are items with an `"explosive"` spec and either `"throwable":

@@ -121,7 +121,8 @@ def main(scenario: str | None = None, play_as: str | None = None, seed: int | No
             app.render(console)
             context.present(console, keep_aspect=True, integer_scaling=True)
             animating = getattr(app.screen, "animating", False)
-            for event in tcod.event.wait(timeout=FRAME_S if animating else None):
+            busy = animating or (hasattr(app.screen, "needs_frames") and app.screen.needs_frames())
+            for event in tcod.event.wait(timeout=FRAME_S if busy else None):
                 if isinstance(event, tcod.event.Quit):
                     app.running = False
                     break

@@ -99,6 +99,9 @@ they know you're there). Background: amber = suspicious, red = has spotted you,
 magenta = aiming at you. Your target is black on bright yellow. Enemies you can see
 on the level above are drawn purple where they stand, below blue.
 
+Bullets are drawn in flight (`*` with a short trail, in slow motion), and each hit
+flashes its tile: red a hit, yellow a critical, grey a miss, blue a parry or dodge.
+
 ## Layout
 
 ```

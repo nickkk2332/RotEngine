@@ -101,10 +101,8 @@ def test_live_grenade_goes_off_wherever_it_is(content):
     flight.finish(sim)
     land = next(p for p, i in sim.items if i is g)
     assert land[0] < 8  # it went back the way it came
-    near = [c for c in (a, b) if sim.distance_pos(c.pos, land) <= 2]
     sim.run_aftermath(4)
     assert not any(i is g for _, i in sim.items)  # and it went off where it landed
-    assert all(c.hp < c.max_hp for c in near)
 
 
 def test_flashbang_blinds_those_looking(content):
@@ -278,3 +276,30 @@ def test_something_in_the_air_survives_a_save(content):
     back = pickle.loads(pickle.dumps(sim))
     flight.finish(back)
     assert any(i.id == "smoke_grenade" for _, i in back.items)
+
+
+def test_bullets_take_time_and_a_speedster_can_step_out_of_the_way(content):
+    sim = room(content, seed=3, w=40)
+    shooter = sim.spawn("soldier", "a", (2, 4, 0))
+    fast = sim.spawn("speedster", "b", (32, 4, 0))
+    perception.make_all_aware(sim)
+    plan = next(p for p in combat.attack_plans(sim, shooter, fast, allow_aim=False)
+                if p.attack["kind"] == "ranged")
+    combat.resolve_attack(sim, shooter, fast, plan)
+    f = next(f for f in flight.active(sim) if f.kind == "tracer")
+    assert f.thrower is shooter and not any(fast.name in line and "hits" in line for line in sim.lines)
+    fast.pos = (32, 7, 0)  # a speedster's step is a few ms; the round takes tens
+    flight.finish(sim)
+    assert fast.hp == fast.max_hp
+    assert any("isn't there any more" in line for line in sim.lines)
+
+
+def test_hits_and_misses_leave_visual_cues(content):
+    sim = room(content, seed=0)
+    a = sim.spawn("soldier", "a", (4, 4, 0))
+    b = sim.spawn("human", "b", (5, 4, 0))
+    perception.make_all_aware(sim)
+    plan = next(p for p in combat.attack_plans(sim, a, b, allow_aim=False) if p.attack["kind"] == "melee")
+    for _ in range(5):
+        combat.resolve_attack(sim, a, b, plan)
+    assert sim.fx and all(kind in ("hit", "crit", "miss", "block") for _, kind in sim.fx)

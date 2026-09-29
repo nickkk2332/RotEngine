@@ -51,6 +51,16 @@ class Flight:
     thrower: "Creature | None" = None
     on_land: Callable | None = None
     done: bool = False
+    t0: int = 0                          # tracers: when fired, and how fast (tiles/s)
+    speed: float = 0.0
+
+
+def tracer_pos(sim: "Sim", f: Flight) -> "Pos":
+    """Where a bullet is right now (worked out from the time, not stepped)."""
+    if not f.path:
+        return f.pos
+    i = int((sim.time - f.t0) * f.speed / 1000)
+    return f.path[max(0, min(len(f.path) - 1, i))]
 
 
 def active(sim: "Sim") -> list[Flight]:
@@ -148,6 +158,27 @@ def _body_land(sim: "Sim", f: Flight) -> None:
     sim.check_fall(target)
 
 
+# -- bullets -----------------------------------------------------------------------
+def launch_tracer(sim: "Sim", shooter: "Creature", aimed_at: "Pos", speed: float,
+                  on_arrive: Callable) -> None:
+    """A shot on its way. Nothing happens in flight (it's too quick to step
+    tile by tile); `on_arrive` settles the shot when it gets there. The UI
+    draws it, in slow motion."""
+    path = list(sim.world.line(shooter.pos, aimed_at)) or [aimed_at]
+    f = Flight("tracer", None, shooter.pos, 0, path=path, thrower=shooter, on_land=on_arrive,
+               t0=sim.time, speed=speed)
+    sim.flights.append(f)
+    sim.flight_started = True
+    arrive = sim.time + max(1, int(len(path) * 1000 / speed))
+    sim.schedule_event(arrive, functools.partial(_tracer_arrives, sim, f))
+
+
+def _tracer_arrives(sim: "Sim", f: Flight) -> None:
+    f.done = True
+    sim.flights[:] = [x for x in sim.flights if not x.done]
+    f.on_land()
+
+
 # -- items -------------------------------------------------------------------------
 def launch_item(sim: "Sim", thrower: "Creature", item: "Item", land: "Pos") -> None:
     """Throw an item at a tile (the landing spot is already decided, scatter
@@ -205,7 +236,8 @@ def finish(sim: "Sim", max_ms: int = 5000) -> None:
     """Run the world until nothing is in the air (tests, and anything that
     needs a throw resolved before carrying on)."""
     end = sim.time + max_ms
-    while active(sim) and sim.time < end:
+    waiting = active(sim)  # just what's in the air now (people keep shooting meanwhile)
+    while any(not f.done for f in waiting) and sim.time < end:
         nxt = min((t for t, _, uid in sim._queue if uid < -1), default=None)
         if nxt is None:
             break

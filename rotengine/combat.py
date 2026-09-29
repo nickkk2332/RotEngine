@@ -22,6 +22,7 @@ Things that fall out of these rules rather than being special-cased:
 """
 from __future__ import annotations
 
+import functools
 import math
 from dataclasses import dataclass
 from functools import lru_cache
@@ -306,8 +307,19 @@ def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: A
 
     time_ms = int(attack.get("time_ms", 1000) * speed_mult)
     attacker.exert(attack.get("fatigue", 0.05 if ranged else 0.3))
-    with sim.focus(attacker.pos, target.pos):
-        took = _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_ms)
+    if ranged and sim.timed_shots:
+        # the rounds are in the air for a few milliseconds (flight.py); the
+        # shot is settled when they get there, and if the target isn't where
+        # it was aimed any more, they fly on past
+        shots = _spend_ammo(attack, item)
+        attacker.aim_target = None
+        speed = attack.get("velocity", DEFAULT_VELOCITY)
+        flight.launch_tracer(sim, attacker, target.pos, speed, functools.partial(
+            _rounds_arrive, sim, attacker, target, plan, surprise, target.pos, attacker.pos, shots, time_ms))
+        took = time_ms
+    else:
+        with sim.focus(attacker.pos, target.pos):
+            took = _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_ms)
     attacker.noisy_until = sim.time + 2000
     noise = attack.get("noise", "gunshot" if ranged else "melee")
     perception.emit_noise(sim, attacker, attacker.pos, noise)
@@ -315,11 +327,45 @@ def resolve_attack(sim: "Sim", attacker: "Creature", target: "Creature", plan: A
     return took
 
 
-def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_ms) -> int:
+DEFAULT_VELOCITY = 400.0   # tiles per second for a ranged attack without its own "velocity"
+
+
+def _spend_ammo(attack: dict, item) -> int:
     shots = attack.get("rof", 1)
     if item is not None and item.ammo is not None:
         shots = min(shots, item.ammo)
         item.ammo -= shots
+    return shots
+
+
+class _Spot:
+    """Where someone was (for rounds that arrive after they've gone)."""
+
+    def __init__(self, pos):
+        self.pos = pos
+
+
+def _rounds_arrive(sim, attacker, target, plan, surprise, aimed_at, fired_from, shots, time_ms) -> None:
+    """The rounds get where they were aimed. Settle the shot as if from where
+    the shooter stood when they fired; if the target has moved off that
+    tile (someone very fast), they fly on past as strays."""
+    here = attacker.pos
+    attacker.pos = fired_from
+    try:
+        with sim.focus(fired_from, aimed_at):
+            if target.pos != aimed_at:
+                verb = plan.attack.get("verb", plan.attack["name"])
+                sim.log(f"{attacker.name} {verb} {target.name}, but {target.name} isn't there any more.")
+                _stray_rounds(sim, attacker, _Spot(aimed_at), plan.dice, shots)
+            else:
+                _resolve(sim, attacker, target, plan, surprise, plan.attack, plan.item, True, time_ms, shots)
+    finally:
+        attacker.pos = here
+
+
+def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_ms, shots=None) -> int:
+    if shots is None:
+        shots = _spend_ammo(attack, item)
     if ranged:
         attacker.aim_target = None
     where = f" (aiming for the {target.body.part(plan.location).name})" if plan.location else ""
@@ -328,6 +374,7 @@ def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_m
     training.practice(sim, attacker, attack["skill"], plan.skill, roll.success)
 
     if not roll.success:
+        sim.cue(target.pos, "miss")
         sim.log(f"{attacker.name} {verb} {target.name}{where} and misses "
                 f"(rolled {roll.roll} vs {plan.skill}).")
         if ranged:
@@ -352,10 +399,12 @@ def _resolve(sim, attacker, target, plan, surprise, attack, item, ranged, time_m
             hits -= blocked
             strays += blocked if ranged else 0
             if hits == 0:
+                sim.cue(target.pos, "block")
                 sim.log(f"{attacker.name} {verb} {target.name}{where}, but {target.name} {name}.")
                 if ranged:
                     _stray_rounds(sim, attacker, target, plan.dice, strays)
                 return time_ms
+    sim.cue(target.pos, "crit" if roll.critical else "hit")
     tag = " (critical!)" if roll.critical else " (unaware!)" if surprise else ""
     if not surprise and defense is None and not roll.critical and target.conscious:
         tag = " (never saw it coming!)" if not _noticed(sim, target, attacker) else " (from behind!)"

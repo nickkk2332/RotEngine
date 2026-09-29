@@ -62,11 +62,19 @@ class Sim:
         self.fields = physics.Fields(self)     # fire and gas
         self._events: dict[int, Callable[[], None]] = {}  # timed events (fuses), by negative id
         self.flights: list = []           # things in the air (flight.py)
+        self.timed_shots = True           # bullets take time to arrive (flight.launch_tracer)
+        self.fx: list[tuple] = []         # (pos, kind) visual cues for the UI: hit, miss, block, crit
         self.flight_started = False       # set when something takes off (the UI animates it)
         self._event_ids = itertools.count(2)
         heapq.heappush(self._queue, (start_time + TICK_MS, next(self._seq), -1))
 
     # -- bookkeeping -------------------------------------------------------
+    def cue(self, pos: Pos, kind: str) -> None:
+        """A visual cue for whoever's watching (the UI flashes the tile)."""
+        self.fx.append((pos, kind))
+        if len(self.fx) > 200:
+            del self.fx[:100]
+
     def log(self, msg: str, private_to: int | None = None) -> None:
         line = f"[{self.time / 1000:6.2f}s] {msg}"
         self.lines.append(line)
