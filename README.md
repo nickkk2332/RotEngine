@@ -83,12 +83,12 @@ python -m pytest
 | Scenario | Result |
 |---|---|
 | Street fight: two average people with knives | ~50/50; the loser is usually unconscious, occasionally bleeds out later |
-| The Hulk (ST 60, DR 25) vs 10 armoured riflemen | Hulk wins 100%; soldiers mostly end up unconscious with broken ribs, the rest missing arms or heads |
-| John Wick (guns 20) vs 8 armed thugs | Wick wins ~82%; most thugs die of blood loss after the fight |
-| Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~52%; loses to simultaneous bursts |
-| Blink assassin vs 6 guards, 2 with pistols | Assassin wins ~5-9%, usually after several kills. Deliberately hard in an open fight |
+| The Hulk (ST 60, DR 25) vs 10 armoured riflemen | Hulk wins ~98%; soldiers mostly end up unconscious with broken ribs, the rest missing arms or heads |
+| John Wick (guns 20) vs 8 armed thugs | Wick wins ~91%; most thugs die of blood loss after the fight |
+| Speedster (tempo 8, knife) vs 6 armoured riflemen | Speedster wins ~59%; loses to simultaneous bursts |
+| Blink assassin vs 6 guards, 2 with pistols (starting unseen) | Assassin wins ~16% (~22% end with both sides out of it). Deliberately hard once it turns into an open fight |
 | Night infiltration: the operative vs 6 guards who don't know you're there | For playing: keep to the shadows, choke them out, hide the bodies |
-| Breach and clear: 4 SWAT (grenades, flashbangs, smoke, charges) vs 6 barricaded occupants (Molotovs) | SWAT wins ~95%, usually losing people to shotguns and their own grenades |
+| Breach and clear: 4 SWAT (grenades, flashbangs, smoke, charges) vs 6 barricaded occupants (Molotovs) | SWAT wins ~99%, usually losing people to shotguns and their own grenades |
 
 Map glyphs: creatures by their template glyph, `&` someone down (unconscious), `%` a
 corpse, dropped weapons by their item glyph. Terrain: `#` concrete/brick, `|` drywall,
