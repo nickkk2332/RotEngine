@@ -1,9 +1,10 @@
 [
   {"type": "damage_type", "id": "crush", "name": "crushing", "wound_mult": 1.0,
-   "bleed": 0.1, "knockback": true, "dismembers": true, "fractures": true},
+   "bleed": 0.1, "knockback": true, "dismembers": true, "fractures": true, "concussive": true,
+   "//": "concussive: a hard enough blow of this type to the head can knock you out."},
   {"type": "damage_type", "id": "cut", "name": "cutting", "wound_mult": 1.5,
-   "bleed": 1.0, "dismembers": true, "depth": 0.25,
-   "//": "depth: how much of the wound reaches what's deep inside (organs, internal bleeding, the brain). A slash opens you up; it doesn't reach your heart."},
+   "bleed": 1.0, "dismembers": true, "depth": 0.25, "dismember_single": true,
+   "//": "depth: how much of the wound reaches what's deep inside (organs, internal bleeding, the brain). A slash opens you up; it doesn't reach your heart. dismember_single: a limb only comes off in one blow big enough to do it (a knife doesn't saw a leg off a nick at a time)."},
   {"type": "damage_type", "id": "pierce", "name": "piercing", "wound_mult": 1.0, "bleed": 0.8},
   {"type": "damage_type", "id": "large_pierce", "name": "large piercing", "wound_mult": 1.5, "bleed": 1.0},
   {"type": "damage_type", "id": "impale", "name": "impaling", "wound_mult": 2.0, "bleed": 1.0},

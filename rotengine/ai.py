@@ -372,18 +372,28 @@ def _has_usable_ranged(c: "Creature") -> bool:
                for a, item in c.attacks())
 
 
+def _threat(e: "Creature") -> int:
+    """How much e can still hurt you: 2 on their feet and able, 1 down but
+    still armed (collapsed with a gun, say), 0 helpless (stunned, doubled
+    over, down and unarmed): finish those later."""
+    if not e.can_act or (e.has_status("prone") and e.wielded is None):
+        return 0
+    if e.has_status("prone") or e.has_status("collapsed"):
+        return 1
+    return 2
+
+
 def _is_threat(e: "Creature") -> bool:
-    """Down, disarmed and unable to stand: finish later, deal with the armed first."""
-    return not (e.has_status("prone") and e.wielded is None and not e.body.functional_with("stance"))
+    return _threat(e) > 0
 
 
 def _choose_target(sim: "Sim", c: "Creature", enemies: list["Creature"],
                    visible: list["Creature"]) -> "Creature":
     pool = visible or enemies
-    if c.target is not None and c.target in pool and (
-            _is_threat(c.target) or not any(_is_threat(e) for e in pool)):
+    best = max(_threat(e) for e in pool)
+    if c.target is not None and c.target in pool and _threat(c.target) >= best:
         return c.target
-    return min(pool, key=lambda e: (not _is_threat(e), sim.distance(c, e), e.uid))
+    return min(pool, key=lambda e: (-_threat(e), sim.distance(c, e), e.uid))
 
 
 def can_reach(sim: "Sim", c: "Creature", target: "Creature") -> bool:

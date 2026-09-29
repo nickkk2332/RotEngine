@@ -746,7 +746,13 @@ class GameScreen(Screen):
                 self.notice = f"{power['name']}: {why}."
                 return None
             self.mode = "play"
-            return self._do(actions.use_power(self.sim, self.player, power, self.target))
+            before = len(self.sim.lines)
+            self._do(actions.use_power(self.sim, self.player, power, self.target))
+            if any("fizzles" in line for line in self.sim.lines[before:]):
+                self.notice = (f"{power['name']} fizzled: pick a target you can see (Tab) first"
+                               if self.target is None or not self._sees(self.target)
+                               else f"{power['name']} fizzled: out of range, or nowhere to land.")
+            return None
         return None
 
     def _key_look(self, key: str):
@@ -1269,6 +1275,9 @@ class GameScreen(Screen):
         else:
             con.print(x, y, "unarmed", fg=CYAN)
         y += 1
+        if p.powers:
+            names = ", ".join(pw["name"] for pw in p.powers)
+            y += print_wrapped(con, x, y, w, f"powers (p): {names}", fg=(200, 170, 255), max_lines=2)
         if p.carried:
             from collections import Counter
             counts = Counter(i.name for i in p.carried)
@@ -1461,6 +1470,8 @@ class GameScreen(Screen):
         hints = {
             "play": ("move · f attack · s sneak · G grab · g get · i items · a use · R rest · > down · ? help"
                      if self.run else
+                     "move · f attack · F quick · p powers · t throw · s sneak · G grab · w swap · M log · ? help"
+                     if self.player.powers else
                      "move/bump · f attack · F quick · t throw · s sneak · G grab/hold · L let go · w swap · ? help"),
             "target": "Tab/arrows: choose target · Enter: attack options · Esc: back",
             "attack": "↑↓ location · ←→ feint · Space aim · < > attack · Enter go · Esc back",
@@ -1490,9 +1501,10 @@ class GameScreen(Screen):
         info = f"{self.sim.distance(p, t)} tiles · {side}" + (f" · cover {cover}" if cover else "")
         con.print(x + 2, y + 1, info, fg=GREY)
         attack, item = m.attacks[m.attack_i]
-        weapon = item.name if item is not None else "bare hands"
+        weapon = item.name if item is not None else None
         ammo = f" ({item.ammo}/{item.data['magazine']})" if item is not None and item.ammo is not None else ""
-        con.print(x + 2, y + 3, f"< {attack['name']} with {weapon}{ammo} >", fg=CYAN)
+        label = f"{attack['name']} with {weapon}{ammo}" if weapon else f"{attack['name']} (unarmed)"
+        con.print(x + 2, y + 3, f"< {label} >", fg=CYAN)
         aim = ("yes" if m.aim else "no") if m.can_aim() else "n/a"
         con.print(x + 2, y + 4, f"Feint: {m.dec}   Aim first: {aim}", fg=WHITE)
         con.print(x + 2, y + 6, f"{'location':<16}{'to hit':>7}{'blocked':>9}{'lands':>7}{'injury':>8}", fg=TITLE)
@@ -1543,7 +1555,11 @@ class GameScreen(Screen):
 
     def _render_powers(self, con) -> None:
         powers = self.player.powers
-        box(con, 6, 6, 56, 4 + 3 * len(powers), "Powers")
+        box(con, 6, 6, 56, 5 + 3 * len(powers), "Powers")
+        t = self.target
+        on = (f"on your target: {t.name} (Tab to change)" if t is not None and self._sees(t)
+              else "no target in sight: powers that need one will fizzle")
+        con.print(8, 7 + 3 * len(powers), on[:52], fg=CYAN if t is not None else ORANGE)
         for i, pw in enumerate(powers):
             why = actions.power_blocked(self.sim, self.player, pw)
             cost = pw.get("cost", {}).get("stamina", 0)

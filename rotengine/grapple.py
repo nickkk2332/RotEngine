@@ -69,11 +69,17 @@ def grab_penalty(t: "Creature", what: str) -> int:
     return t.body.part(what).data.get("hit_penalty", 0)
 
 
+GRAB_BONUS = 2  # a grab only needs contact: easier to land than a blow
+
+
 def grab_skill(c: "Creature", t: "Creature", what: str, unaware: bool = False) -> int:
-    """Wrestling at the location's penalty, halved against someone who
-    doesn't see it coming (they aren't guarding their throat)."""
+    """Getting hold: your best of Wrestling, Brawling or DEX (anyone who can
+    fight can grab), +2, at the location's penalty (halved against someone
+    who doesn't see it coming). The hard part is what happens next, and
+    that's where Wrestling counts."""
     pen = grab_penalty(t, what)
-    return c.skill("wrestling") - c.action_penalty("melee") + (int(pen / 2) if unaware else pen)
+    base = max(c.skill("wrestling"), c.skill("brawling"), c.stat("DEX"))
+    return base + GRAB_BONUS - c.action_penalty("melee") + (int(pen / 2) if unaware else pen)
 
 
 def grab_odds(sim: "Sim", c: "Creature", t: "Creature", what: str) -> float:

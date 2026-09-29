@@ -41,6 +41,7 @@ REACTION_MS = 1000          # a defense occupies this much of the defender's own
 TEMPO_DEFENSE = 2           # defense bonus per doubling of defender tempo over attacker tempo
 STACKED_DEFENSE_PENALTY = 2  # per earlier defense still inside the window
 SIDE_PENALTY = 2
+HELPLESS_BONUS = 5          # melee against someone unconscious (and called shots cost half)
 AIM_MS = 1000
 BYSTANDER_HIT = 9           # 3d6 roll to hit someone standing in a stray round's path
 _RING = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
@@ -194,6 +195,9 @@ def base_skill(sim: "Sim", attacker: "Creature", target: "Creature", attack: dic
     if attack["kind"] == "melee":
         if not sim.in_melee_reach(attacker.pos, target.pos, attack.get("reach", 1)):
             return None
+        skill += int(target.status_sum("melee_target_mod"))  # someone on the floor is easier to hit
+        if not target.conscious:
+            skill += HELPLESS_BONUS  # out cold: hard to miss, though it's still your swing
         return skill
     dist = sim.distance(attacker, target)
     if dist > attack.get("range", 100) or item is not None and item.ammo == 0:
@@ -260,7 +264,9 @@ def _candidates(sim, attacker, target, surprise, skill_bonus, damage_bonus, allo
             per_part[p.id] = expected_injury(dice, target.dr(p.id, dtype["id"]),
                                              body.wound_multiplier(p, dtype), part_cap)
         options = [(None, 0, sum(per_part[p.id] * p.data.get("weight", 0) for p in parts) / total_weight)]
-        options += [(p.id, p.data.get("hit_penalty", 0), per_part[p.id]) for p in parts]
+        helpless = attack["kind"] == "melee" and not target.conscious
+        options += [(p.id, int(p.data.get("hit_penalty", 0) / (2 if helpless else 1)), per_part[p.id])
+                    for p in parts]
         shots = attack.get("rof", 1)
         if item is not None and item.ammo is not None:
             shots = min(shots, item.ammo)
@@ -529,34 +535,33 @@ def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> Non
         knock_out(sim, c, "from the sheer trauma")
         return
 
-    # Knockdown. A big hit puts you down and stuns you; only a blow to the
-    # head (a "concussion" part) can knock you out.
+    # Knockdown. A big hit puts you down and stuns you. Only a blunt blow
+    # ("concussive" damage) to the head (a "concussion" part) can knock you
+    # out, and not for long: a cut to the scalp hurts, it doesn't switch you off.
     head = bool(part.data.get("concussion"))
-    if inj.injury > mh * 2 / 3 or (head and inj.injury >= mh / 4):
+    concussive = head and bool(sim.content.get("damage_type", inj.damage_type).get("concussive"))
+    if inj.injury > mh * 2 / 3 or (concussive and inj.injury >= mh / 4):
         kd = part.data.get("knockdown_mod", 0)
         r = check(sim.rng, c.stat("CON") + kd + int(c.trait_sum("knockdown_bonus")))
         if not r.success:
-            if head and (r.margin <= -5 or r.fumble):
-                knock_out(sim, c, "from the blow to the head")
+            if concussive and (r.margin <= -5 or r.fumble):
+                knock_out(sim, c, "from the blow to the head", sim.rng.randint(*CONCUSSION_MS))
                 return
             sim.log(f"  {c.name} is knocked down and stunned.")
             c.add_status("prone", None)
             sim.apply_status(c, "stunned", 3000 if head else 2000)
 
-    # Badly hurt: every new wound is a fight to stay awake, harder the worse
-    # it gets (see stays_conscious). Being below 0 HP isn't a knockout by itself.
-    if c.hp < 0 and not stays_conscious(sim, c):
-        knock_out(sim, c, "from shock")
-        return
-
-    # Pain: going into the red, or a big wound once you're there, is a WIS
-    # roll. Fail and your legs go: collapsed, but awake, and you can still
-    # shoot and fight from the floor, badly.
-    if c.hp <= 0 < prev_hp or (c.hp <= 0 and inj.injury >= mh / 3):
+    # Being in the red isn't a knockout. It's pain: going into the red, or a
+    # big wound once you're there, is a WIS roll. Fail and your legs go:
+    # collapsed, but awake, and you can still shoot and fight from the
+    # floor, badly. (You go out from blood loss, a blow to the head, lack of
+    # air, or trauma past -4 x HP.)
+    in_red = c.hp <= 0
+    if c.hp <= 0 < prev_hp or (in_red and inj.injury >= mh / 3):
         r = check(sim.rng, c.stat("WIS") + int(c.trait_sum("pain_resist")) - int(-c.hp // mh))
         if not r.success:
             collapse(sim, c, "from the pain")
-    if (inj.injury >= mh / 2 or inj.newly_fractured or inj.newly_destroyed) \
+    if (inj.injury >= (mh / 4 if in_red else mh / 2) or inj.newly_fractured or inj.newly_destroyed) \
             and not c.has_status("stunned") and not c.has_status("agony"):
         r = check(sim.rng, c.stat("WIS") + int(c.trait_sum("pain_resist")))
         if not r.success:
@@ -564,7 +569,8 @@ def _after_injury(sim: "Sim", c: "Creature", inj: Injury, prev_hp: float) -> Non
             sim.apply_status(c, "agony", 1500 if r.margin > -5 else 3000)
 
 
-SHOCK_OUT = 3        # at -3 x HP nobody stays conscious
+SHOCK_OUT = 4        # at -4 x HP nobody stays conscious (-5 x HP is torn apart)
+CONCUSSION_MS = (15_000, 90_000)  # how long a knockout blow to the head keeps you under
 SHOCK_BASE = 4       # stays_conscious rolls CON + this, minus how bad it is
 
 
@@ -578,9 +584,9 @@ def consciousness_penalty(c: "Creature") -> int:
 
 
 def stays_conscious(sim: "Sim", c: "Creature") -> bool:
-    """A CON roll to stay awake (or to come round): CON + 4 + knockdown
-    bonuses, minus consciousness_penalty. Easy when you're just in the red,
-    a coin flip at -2 x HP, and a lost cause past -3 x HP or below 50% blood."""
+    """A CON roll to stay awake through blood loss, or to come round: CON + 4
+    + knockdown bonuses, minus consciousness_penalty. A lost cause past
+    -4 x HP, below 50% blood or out of air."""
     if c.hp <= -SHOCK_OUT * c.max_hp or c.body.blood < 50 or c.body.oxygen <= 10:
         return False
     target = c.stat("CON") + SHOCK_BASE + int(c.trait_sum("knockdown_bonus")) - consciousness_penalty(c)
@@ -602,10 +608,12 @@ def check_grip(sim: "Sim", c: "Creature") -> None:
         c.wielded = None
 
 
-def knock_out(sim: "Sim", c: "Creature", why: str = "") -> None:
+def knock_out(sim: "Sim", c: "Creature", why: str = "", duration_ms: int | None = None) -> None:
+    """Out cold: for duration_ms (a blow to the head, a choke), or until the
+    body recovers enough to come round (see Sim._can_wake)."""
     if c.conscious:
         sim.log(f"  {c.name} falls unconscious{' ' + why if why else ''}.")
-        c.add_status("unconscious", None)
+        c.add_status("unconscious", None if duration_ms is None else sim.time + duration_ms)
         c.add_status("prone", None)
 
 

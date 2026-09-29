@@ -68,7 +68,7 @@ def test_blunt_beating_puts_you_down_long_before_it_kills(content):
         dead += c.dead
     assert dead == 0
     assert downed >= 25          # on the floor, one way or another
-    assert 3 <= out <= 25        # but not always out cold: body blows don't switch you off
+    assert out <= 3              # but body blows don't switch you off
 
 
 def test_going_into_the_red_is_not_a_knockout(content):
@@ -155,12 +155,14 @@ def test_slashes_open_you_up_but_do_not_reach_organs(content):
     assert stabbed.body.internal_bleed > 0 and stabbed.body.part("vitals").destroyed
 
 
-def test_slashes_still_take_limbs_off(content):
+def test_a_limb_comes_off_in_one_blow_or_not_at_all(content):
     sim = open_arena(content)
     c = sim.spawn("human", "a", (3, 3, 0))
-    for _ in range(4):
+    for _ in range(6):  # a knife nicking away at an arm cripples it, it doesn't take it off
         combat.deal_damage(sim, c, 5, "cut", "l_arm")
-    assert c.body.part("l_arm").destroyed
+    assert c.body.part("l_arm").crippled and not c.body.part("l_arm").destroyed
+    combat.deal_damage(sim, c, 8, "cut", "r_arm")  # one heavy blow (12 injury, HP 10) does
+    assert c.body.part("r_arm").destroyed
 
 
 def test_knife_modes_trade_accuracy_for_depth(content):
@@ -171,3 +173,59 @@ def test_knife_modes_trade_accuracy_for_depth(content):
     slash = next(p for p in plans if p.attack["id"] == "slash" and p.location is None and not p.deceptive)
     stab = next(p for p in plans if p.attack["id"] == "stab" and p.location is None and not p.deceptive)
     assert slash.skill == stab.skill + 2
+
+
+def test_a_cut_to_the_head_does_not_knock_you_out(content):
+    out = 0
+    for seed in range(40):
+        sim = open_arena(content, seed=seed)
+        c = sim.spawn("street_tough", "a", (3, 3, 0))
+        combat.deal_damage(sim, c, 5, "cut", "face")
+        out += not c.conscious
+    assert out == 0
+
+
+def test_a_knockout_blow_wears_off(content):
+    for seed in range(60):  # a club to the head, until one lands a knockout
+        sim = open_arena(content, seed=seed)
+        c = sim.spawn("street_tough", "a", (3, 3, 0))
+        combat.deal_damage(sim, c, 4, "crush", "skull", knockback_ok=False)
+        if not c.conscious and not c.dead:
+            break
+    assert not c.conscious and c.statuses["unconscious"] is not None  # timed, not forever
+    for s in range(200):
+        sim.time += 1000
+        sim._tick_one(c, s)
+        if c.conscious:
+            break
+    assert c.conscious or c.dead
+
+
+def test_bleeding_out_is_a_threshold(content):
+    """Faint from blood loss and you may come round, but not below 55%."""
+    sim = open_arena(content, seed=2)
+    c = sim.spawn("human", "a", (3, 3, 0))
+    combat.knock_out(sim, c, "test")
+    c.body.blood = 52
+    for s in range(60):
+        sim._tick_one(c, s)
+    assert not c.conscious  # too little blood to wake
+    c.body.blood = 80
+    for s in range(60, 200):
+        sim._tick_one(c, s)
+        if c.conscious:
+            break
+    assert c.conscious
+
+
+def test_helpless_and_downed_targets_are_easier_to_hit(content):
+    sim = open_arena(content, seed=1)
+    a = sim.spawn("street_tough", "a", (3, 3, 0))
+    t = sim.spawn("street_tough", "b", (4, 3, 0))
+    knife = next(x for x, _ in a.attacks() if x["id"] == "slash")
+    standing = combat.base_skill(sim, a, t, knife, a.wielded)
+    t.add_status("prone", None)
+    prone = combat.base_skill(sim, a, t, knife, a.wielded)
+    combat.knock_out(sim, t, "test")
+    out = combat.base_skill(sim, a, t, knife, a.wielded)
+    assert standing < prone < out

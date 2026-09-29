@@ -507,8 +507,8 @@ class Sim:
         if c.conscious:
             if b.blood < 50:
                 combat.knock_out(self, c, "from blood loss")
-            elif second % 10 == 0 and (b.blood < 70 or c.hp < -c.max_hp) and not combat.stays_conscious(self, c):
-                combat.knock_out(self, c, "from blood loss" if b.blood < 70 else "from shock")
+            elif second % 10 == 0 and b.blood < 70 and not combat.stays_conscious(self, c):
+                combat.knock_out(self, c, "from blood loss")
             elif second % 10 == 5 and c.has_status("collapsed"):
                 self._try_to_rise(c)
         if b.bleed_rate > 0 and second % 10 == 0:
@@ -532,5 +532,5 @@ class Sim:
         """Coming round (a stays_conscious roll every 5 s) needs the things
         that put you under to have eased."""
         b = c.body
-        return (c.hp > -2 * c.max_hp and b.blood >= 60 and c.stamina > 0 and b.oxygen >= 50
+        return (c.hp > -combat.SHOCK_OUT * c.max_hp and b.blood >= 55 and b.oxygen >= 50
                 and not c.has_status("cardiac_arrest") and not c.status_sum("hypoxia") and b.hypoxia < 50)

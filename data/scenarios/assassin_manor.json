@@ -1,6 +1,9 @@
 {
  "name": "Assassin in the manor",
- "description": "A sword-and-blink assassin against six guards, two of them with pistols on the upper floor.",
+ "description": "Night. A sword-and-blink assassin gets into a manor where six guards (two with pistols, upstairs) don't know she's there. Stay in the dark, blink (p) behind them one at a time; if the alarm goes up, it's six against one.",
+ "start_alert": false,
+ "aware_teams": ["assassin"],
+ "ambient_light": 0.25,
  "levels": [
   [
    "##############################",

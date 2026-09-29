@@ -203,8 +203,8 @@ class Body:
         deep_injury = injury * dtype.get("depth", 1.0)
         part.deep += deep_injury
         destroy_at = d.get("destroy_at")
-        if dtype.get("sudden"):
-            amount = injury
+        if dtype.get("sudden") or (dtype.get("dismember_single") and not d.get("organ")):
+            amount = injury  # it comes off in one blow, or not at all
         else:
             amount = part.deep if d.get("deep") else part.damage
         if (destroy_at is not None and not part.destroyed

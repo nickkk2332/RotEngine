@@ -5,7 +5,7 @@
       "damage": {"st": "swing", "add": -2, "type": "cut"}, "parry": -1, "time_ms": 1000,
       "//": "Easy to land and it opens people up, but shallow: it won't reach organs."},
      {"id": "stab", "name": "stab", "verb": "stabs", "kind": "melee", "skill": "knife", "skill_mod": -1,
-      "damage": {"st": "thrust", "add": 0, "type": "impale"}, "parry": -1, "time_ms": 1000,
+      "damage": {"st": "thrust", "add": 1, "type": "impale"}, "parry": -1, "time_ms": 1000,
       "//": "Harder to put where it counts, and devastating when it gets there."}
    ]},
   {"type": "item", "id": "baseball_bat", "name": "baseball bat", "glyph": "/", "weight": 3, "two_handed": true,
@@ -20,7 +20,7 @@
      {"id": "cut", "name": "cut", "verb": "cuts at", "kind": "melee", "skill": "sword",
       "damage": {"st": "swing", "add": 1, "type": "cut"}, "parry": 0, "time_ms": 1000},
      {"id": "thrust", "name": "thrust", "verb": "lunges at", "kind": "melee", "skill": "sword", "skill_mod": -1,
-      "damage": {"st": "thrust", "add": 1, "type": "impale"}, "parry": 0, "time_ms": 1000}
+      "damage": {"st": "thrust", "add": 2, "type": "impale"}, "parry": 0, "time_ms": 1000}
    ]},
   {"type": "item", "id": "pistol", "name": "9mm pistol", "glyph": "(", "weight": 2,
    "magazine": 15, "reload_ms": 2000,

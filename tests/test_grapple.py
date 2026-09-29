@@ -241,7 +241,7 @@ def test_grabbing_for_a_blade_can_cost_you_your_fingers(content):
         if a.grappling is None and any(p.damage for p in a.body.parts.values()):
             hurt += 1
             assert any("edge of" in line for line in sim.lines)
-    assert hurt >= 10  # a knife in a fighter's hand is not a thing to grab at
+    assert hurt >= 4  # a knife in a fighter's hand is not a thing to grab at
 
 
 def test_grabbing_for_a_gun_can_get_you_shot(content):
